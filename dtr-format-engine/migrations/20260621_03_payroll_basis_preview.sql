@@ -1,0 +1,75 @@
+-- DTR Format Engine payroll-basis preview tables.
+-- Scope: module-owned preview tables only. These tables intentionally do not
+-- connect to payroll generation or payroll amount tables.
+
+CREATE TABLE IF NOT EXISTS dtr_payroll_basis_preview_headers (
+    id INT NOT NULL AUTO_INCREMENT,
+    preview_uid VARCHAR(80) NOT NULL,
+    profile_key VARCHAR(40) NOT NULL,
+    profile_name VARCHAR(160) NOT NULL,
+    client_id INT NULL,
+    client_name_snapshot VARCHAR(160) NULL,
+    location_id INT NULL,
+    location_name_snapshot VARCHAR(160) NULL,
+    pay_period_start DATE NULL,
+    pay_period_end DATE NULL,
+    source_batch_ids_json LONGTEXT NULL,
+    source_batch_count INT NOT NULL DEFAULT 0,
+    row_count INT NOT NULL DEFAULT 0,
+    eligible_row_count INT NOT NULL DEFAULT 0,
+    excluded_row_count INT NOT NULL DEFAULT 0,
+    total_preview_worked_hours DECIMAL(12,4) NOT NULL DEFAULT 0.0000,
+    basis_status VARCHAR(40) NOT NULL DEFAULT 'draft',
+    approval_status VARCHAR(40) NOT NULL DEFAULT 'preview_only',
+    payroll_handoff_status VARCHAR(40) NOT NULL DEFAULT 'blocked',
+    review_notes VARCHAR(255) NULL,
+    created_by VARCHAR(120) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_dtr_preview_uid (preview_uid),
+    KEY idx_dtr_preview_profile_period (profile_key, pay_period_start, pay_period_end),
+    KEY idx_dtr_preview_client_period (client_id, location_id, pay_period_start, pay_period_end),
+    KEY idx_dtr_preview_status (basis_status, approval_status, payroll_handoff_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS dtr_payroll_basis_preview_rows (
+    id INT NOT NULL AUTO_INCREMENT,
+    preview_header_id INT NOT NULL,
+    profile_key VARCHAR(40) NOT NULL,
+    employee_id INT NULL,
+    payroll_employee_id_snapshot VARCHAR(80) NULL,
+    employee_name_snapshot VARCHAR(220) NULL,
+    employee_identifier_source VARCHAR(120) NULL,
+    client_id INT NULL,
+    client_name_snapshot VARCHAR(160) NULL,
+    location_id INT NULL,
+    location_name_snapshot VARCHAR(160) NULL,
+    pay_period_start DATE NULL,
+    pay_period_end DATE NULL,
+    work_date DATE NULL,
+    time_in VARCHAR(20) NULL,
+    time_out VARCHAR(20) NULL,
+    worked_hours_preview DECIMAL(12,4) NOT NULL DEFAULT 0.0000,
+    worked_days_preview DECIMAL(12,4) NOT NULL DEFAULT 0.0000,
+    eligibility_status VARCHAR(40) NOT NULL DEFAULT 'eligible_preview',
+    issue_exclusion_reason LONGTEXT NULL,
+    source_batch_id INT NOT NULL,
+    source_batch_uid VARCHAR(80) NULL,
+    source_row_id INT NOT NULL,
+    source_row_number INT NOT NULL,
+    validation_status VARCHAR(40) NOT NULL DEFAULT 'valid',
+    conflict_status VARCHAR(40) NOT NULL DEFAULT 'clear',
+    approval_status VARCHAR(40) NOT NULL DEFAULT 'preview_only',
+    payroll_handoff_status VARCHAR(40) NOT NULL DEFAULT 'blocked',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_dtr_preview_row_header (preview_header_id),
+    KEY idx_dtr_preview_row_employee_period (employee_id, pay_period_start, pay_period_end),
+    KEY idx_dtr_preview_row_source (source_batch_id, source_row_id),
+    KEY idx_dtr_preview_row_profile (profile_key, validation_status, eligibility_status),
+    CONSTRAINT fk_dtr_preview_rows_header
+        FOREIGN KEY (preview_header_id)
+        REFERENCES dtr_payroll_basis_preview_headers (id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

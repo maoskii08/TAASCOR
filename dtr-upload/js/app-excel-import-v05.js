@@ -498,6 +498,7 @@ var ExcelImport = function(params){
         url: url,
         type: "POST",
         contentType: "application/json;charset=utf-8",
+        headers: { "X-CSRF-Token": $('#csrf_token').val() },
         data: JSON.stringify(payload),
         dataType: "json"
       })
@@ -553,11 +554,12 @@ var ExcelImport = function(params){
           $('html, body').animate({ scrollTop:  $(tableOutputSelector).offset().top + 250}, 'slow');
           
           var formdata = new FormData();
-          for(let i=0; i < payrollDetails.length; i++) {
-            formdata.append("client_name", payrollDetails[i][0]);
-            formdata.append("cut_off", payrollDetails[i][1]);
-            formdata.append("pay_day", payrollDetails[i][2]);
-          }
+           for(let i=0; i < payrollDetails.length; i++) {
+             formdata.append("client_name", payrollDetails[i][0]);
+             formdata.append("cut_off", payrollDetails[i][1]);
+             formdata.append("pay_day", payrollDetails[i][2]);
+           }
+          formdata.append("csrf_token", $('#csrf_token').val());
           $.ajax({
             
             url: 'controller/ImportController.php',

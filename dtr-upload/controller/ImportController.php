@@ -17,16 +17,18 @@ $model->client_name = $_POST['client_name'];
 $model->cut_off = $_POST['cut_off'];
 $model->pay_day = $_POST['pay_day'];
 
-$validate = $model->validate();
-if($validate['success'] == 1){
-    $response = $model->spCalculateDTR();
+$identityGate = $model->validateEmployeeIdentityScope();
+if(($identityGate['success'] ?? 0) !== 1){
+    $response = $identityGate;
 }else{
-    $deleteInvalid = $model->deleteInvalid();
-    if($deleteInvalid['success'] == 1){
-        $model->spCalculateDTR();
-        $response = $validate;
+    $validate = $model->validate();
+    if($validate['success'] == 1){
+        $response = $model->spCalculateDTR();
+        $response['identity_gate'] = $identityGate['identity_gate'];
     }else{
-        $response = $deleteInvalid;
+        // Never delete failed rows and continue with a partial payroll calculation.
+        $response = $validate;
+        $response['partial_payroll_prevented'] = true;
     }
 }
 

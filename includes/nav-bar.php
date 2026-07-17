@@ -158,6 +158,12 @@ session_write_close();
                   </div>
                 </a>
               </li>
+              <li style="display:none" class="menu-item" value="38" id="a38">
+                <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/" class="menu-link">
+                  <div class="text-truncate menu-sub-title" data-i18n="DTR Format Engine">DTR Format Engine
+                  </div>
+                </a>
+              </li>
               <li style="display:none" class="menu-item" value="31" id="a31">
                 <a href="/<?php echo $pathParts[6];?>/dtr-upload/" class="menu-link">
                   <div class="text-truncate menu-sub-title" data-i18n="DTR Upload">DTR Upload</div>
@@ -305,4 +311,3 @@ session_write_close();
         </div>
       </nav>
       <!-- / sidebar -->
-

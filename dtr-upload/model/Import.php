@@ -13,30 +13,32 @@ class Import{
         
     try {
       $sql = "CALL sp_calculate_dtr(
-                    '{$this->client_name}'
-                    ,'{$this->pay_day}'
-                    ,'{$this->cut_off}'
+                    :client_name
+                    ,:pay_day
+                    ,:cut_off
               )";
       if($this->cut_off == 'Weekly'){
         $sql = "CALL sp_calculate_dtr_weekly(
-          '{$this->client_name}'
-          ,'{$this->pay_day}'
-          ,'{$this->cut_off}'
+          :client_name
+          ,:pay_day
+          ,:cut_off
         )";
       }
       $stmt = $this->db->prepare($sql);
+      $stmt->bindParam(':client_name', $this->client_name, PDO::PARAM_STR);
+      $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+      $stmt->bindParam(':cut_off', $this->cut_off, PDO::PARAM_STR);
       $stmt->execute();
 
       $response = array(
-        "success" => 1,
-        "sql" => $sql 
+        "success" => 1
       );
 
     } catch (PDOException $e) {
+      error_log('Import::spCalculateDTR failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "message" => $e->getMessage(), 
-        "sql" => $sql 
+        "message" => "Unable to calculate DTR."
       );
  
     }
@@ -235,6 +237,11 @@ class Import{
 
   public function add(array $data, $columnMap){
     try {
+      $identity = $this->resolveEmployeeIdentitiesForImport($data, $columnMap);
+      if(($identity['success'] ?? 0) !== 1){
+        return $identity;
+      }
+      $data = $identity['data'];
       $this->db->beginTransaction();
 
       $columnMap = $columnMap;
@@ -246,7 +253,6 @@ class Import{
             $response['success'] = 0;
             $response['message'] = 'Insert Syntax Error!';
             $response['error'] = $insert['message'];
-            $response['sql'] = $insert['sql'];
             return $response;
             exit();
           }
@@ -255,14 +261,227 @@ class Import{
         
       $this->db->commit();
       $response['success'] = 1;
-      // $response['sql'] = $insert['sql'];
       $response['message'] = 'Success';
-    } catch (PDOException $e) {
-      $this->db->rollBack();
+    } catch (Throwable $e) {
+      if($this->db->inTransaction()){
+        $this->db->rollBack();
+      }
+      error_log('Import::add failed: ' . $e->getMessage());
       $response['success'] = 0;
       $response['error'] = "An error occurred. Please contact your administrator.";
     }
     return $response;
+  }
+
+  public function validateEmployeeIdentityScope(){
+    try {
+      $client = $this->clientRecord();
+      if(!$client){
+        return [
+          'success' => 0,
+          'validation' => ['employeeIdentity'],
+          'error_message' => ['employeeIdentity' => 'Client is not configured in HRIS'],
+          'error_count' => ['employeeIdentity' => 1],
+          'errors' => ['employeeIdentity' => []],
+        ];
+      }
+
+      $open = $this->db->prepare("\n        SELECT COUNT(DISTINCT e.id)\n        FROM dtr_employee_exceptions e\n        INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n        INNER JOIN dtr_format_templates t ON t.id = b.template_id\n        INNER JOIN dtr_upload_staging_rows r ON r.id = e.staging_row_id\n        WHERE t.client_id = :client_id\n          AND e.status = 'open'\n          AND e.severity = 'P0'\n          AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.pay_date')) = :pay_day\n      ");
+      $open->execute([
+        ':client_id' => (int)$client['client_id'],
+        ':pay_day' => $this->pay_day,
+      ]);
+      $openCount = (int)$open->fetchColumn();
+      if($openCount > 0){
+        return [
+          'success' => 0,
+          'validation' => ['employeeIdentity'],
+          'error_message' => ['employeeIdentity' => 'Payroll is blocked by unresolved staged employee identities'],
+          'error_count' => ['employeeIdentity' => $openCount],
+          'errors' => ['employeeIdentity' => []],
+          'identity_gate' => [
+            'gate_status' => 'blocked',
+            'open_p0_count' => $openCount,
+            'resolution_url' => '../dtr-format-engine/#employee-identity-review',
+          ],
+        ];
+      }
+
+      $orphans = $this->db->prepare("\n        SELECT d.employee_id, COUNT(*) AS affected_rows\n        FROM dtr_upload d\n        LEFT JOIN employee_list e\n          ON e.employee_id = d.employee_id\n         AND e.client_id = :client_id_a\n         AND e.status = 'Active'\n        WHERE d.client_name = :client_name\n          AND d.cut_off = :cut_off\n          AND d.pay_day = :pay_day\n          AND e.employee_id IS NULL\n        GROUP BY d.employee_id\n        ORDER BY d.employee_id\n        LIMIT 100\n      ");
+      $orphans->execute([
+        ':client_id_a' => (int)$client['client_id'],
+        ':client_name' => $this->client_name,
+        ':cut_off' => $this->cut_off,
+        ':pay_day' => $this->pay_day,
+      ]);
+      $rows = $orphans->fetchAll(PDO::FETCH_ASSOC);
+      if(count($rows) > 0){
+        return [
+          'success' => 0,
+          'validation' => ['employeeIdentity'],
+          'error_message' => ['employeeIdentity' => 'Imported DTR contains missing, inactive, or wrong-client employees'],
+          'error_count' => ['employeeIdentity' => count($rows)],
+          'errors' => ['employeeIdentity' => $rows],
+          'identity_gate' => ['gate_status' => 'blocked', 'open_p0_count' => count($rows)],
+        ];
+      }
+
+      return ['success' => 1, 'identity_gate' => ['gate_status' => 'ready', 'open_p0_count' => 0]];
+    } catch (Throwable $error) {
+      error_log('Import::validateEmployeeIdentityScope failed: ' . $error->getMessage());
+      return [
+        'success' => 0,
+        'validation' => ['employeeIdentity'],
+        'error_message' => ['employeeIdentity' => 'Unable to verify employee identities'],
+        'error_count' => ['employeeIdentity' => 1],
+        'errors' => ['employeeIdentity' => []],
+      ];
+    }
+  }
+
+  private function resolveEmployeeIdentitiesForImport(array $data, array $columnMap): array
+  {
+    $employeeColumn = $this->employeeColumnIndex($columnMap);
+    if($employeeColumn < 0){
+      return $this->identityImportError(['Employee ID column is not mapped.']);
+    }
+    $client = $this->clientRecord();
+    if(!$client){
+      return $this->identityImportError(['Selected client is not configured in HRIS.']);
+    }
+    $clientId = (int)$client['client_id'];
+    $isFuji = $clientId === 264 || stripos((string)$client['client_name'], 'FUJI') !== false;
+    $sourceNamespace = $isFuji ? $this->fujiSourceNamespace($clientId) : null;
+    if($isFuji && $sourceNamespace === null){
+      return $this->identityImportError(['Fuji identity template is not configured.']);
+    }
+    $unresolved = [];
+    $resolvedData = $data;
+    $mappingDate = $this->identityReferenceDate();
+
+    $map = $this->db->prepare("\n      SELECT DISTINCT m.employee_id\n      FROM employee_identity_map m\n      INNER JOIN employee_list e ON e.employee_id = m.employee_id\n      WHERE m.client_id = :client_id\n        AND m.source_namespace = :source_namespace\n        AND m.source_employee_id = :source_employee_id\n        AND m.status = 'approved'\n        AND e.client_id = :employee_client_id\n        AND e.status = 'Active'\n        AND (m.effective_from IS NULL OR m.effective_from <= :mapping_date_from)\n        AND (m.effective_to IS NULL OR m.effective_to >= :mapping_date_to)\n      ORDER BY m.employee_id\n    ");
+    $direct = $this->db->prepare("\n      SELECT employee_id\n      FROM employee_list\n      WHERE client_id = :client_id\n        AND status = 'Active'\n        AND (\n             CAST(employee_id AS CHAR) = :identifier_a\n          OR payroll_employee_id = :identifier_b\n          OR old_employee_id = :identifier_c\n        )\n      ORDER BY employee_id\n      LIMIT 2\n    ");
+
+    foreach($data as $index => $row){
+      $sourceId = trim((string)($row[$employeeColumn] ?? ''));
+      if($sourceId === ''){
+        $unresolved[] = ['row' => $index + 1, 'source_employee_id' => '', 'reason' => 'missing_source_employee_id'];
+        continue;
+      }
+      $mapped = [];
+      if($sourceNamespace !== null){
+        $map->execute([
+          ':client_id' => $clientId,
+          ':source_namespace' => $sourceNamespace,
+          ':source_employee_id' => $sourceId,
+          ':employee_client_id' => $clientId,
+          ':mapping_date_from' => $mappingDate,
+          ':mapping_date_to' => $mappingDate,
+        ]);
+        $mapped = array_values(array_unique(array_map('intval', $map->fetchAll(PDO::FETCH_COLUMN))));
+      }
+      if(count($mapped) === 1){
+        $resolvedData[$index][$employeeColumn] = $mapped[0];
+        continue;
+      }
+      if(count($mapped) > 1){
+        $unresolved[] = ['row' => $index + 1, 'source_employee_id' => $sourceId, 'reason' => 'conflicting_approved_mappings'];
+        continue;
+      }
+      if($isFuji){
+        $unresolved[] = ['row' => $index + 1, 'source_employee_id' => $sourceId, 'reason' => 'fuji_mapping_not_approved'];
+        continue;
+      }
+      $direct->execute([
+        ':client_id' => $clientId,
+        ':identifier_a' => $sourceId,
+        ':identifier_b' => $sourceId,
+        ':identifier_c' => $sourceId,
+      ]);
+      $directMatches = array_values(array_unique(array_map('intval', $direct->fetchAll(PDO::FETCH_COLUMN))));
+      if(count($directMatches) === 1){
+        $resolvedData[$index][$employeeColumn] = $directMatches[0];
+      }else{
+        $unresolved[] = [
+          'row' => $index + 1,
+          'source_employee_id' => $sourceId,
+          'reason' => count($directMatches) > 1 ? 'ambiguous_hris_identifier' : 'employee_not_found',
+        ];
+      }
+    }
+
+    if(count($unresolved) > 0){
+      return $this->identityImportError($unresolved);
+    }
+    return ['success' => 1, 'data' => $resolvedData];
+  }
+
+  private function clientRecord(): ?array
+  {
+    $name = '';
+    if(count($this->payrollDetails) > 0){
+      $name = trim((string)($this->payrollDetails[0][0] ?? ''));
+    }
+    if($name === ''){
+      $name = trim((string)$this->client_name);
+    }
+    if($name === ''){
+      return null;
+    }
+    $stmt = $this->db->prepare('SELECT client_id, client_name FROM taascor_client WHERE client_name = :client_name LIMIT 1');
+    $stmt->execute([':client_name' => $name]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row ?: null;
+  }
+
+  private function fujiSourceNamespace(int $clientId): ?string
+  {
+    $stmt = $this->db->prepare("\n      SELECT id\n      FROM dtr_format_templates\n      WHERE client_id = :client_id\n        AND source_type = 'fuji_payroll_summary'\n        AND is_active = 1\n      ORDER BY id DESC\n      LIMIT 1\n    ");
+    $stmt->execute([':client_id' => $clientId]);
+    $templateId = (int)$stmt->fetchColumn();
+    return $templateId > 0 ? 'template:' . $templateId : null;
+  }
+
+  private function identityImportError(array $unresolved): array
+  {
+    return [
+      'success' => 0,
+      'message' => 'DTR upload blocked by unresolved employee identities.',
+      'error' => [
+        'message' => 'Resolve the employee mapping queue in DTR Format Engine before uploading payroll data.',
+        'code' => 'employee_identity_blocked',
+      ],
+      'identity_gate' => [
+        'gate_status' => 'blocked',
+        'open_p0_count' => count($unresolved),
+        'unresolved' => array_slice($unresolved, 0, 100),
+        'resolution_url' => '../dtr-format-engine/#employee-identity-review',
+      ],
+    ];
+  }
+
+  private function employeeColumnIndex(array $columnMap): int
+  {
+    foreach($columnMap as $field => $column){
+      $normalizedField = strtolower((string)preg_replace('/[^a-z0-9]+/i', '_', trim((string)$field)));
+      if($normalizedField === 'employee_id'){
+        return (int)$column;
+      }
+    }
+    return -1;
+  }
+
+  private function identityReferenceDate(): string
+  {
+    $candidate = count($this->payrollDetails) > 0
+      ? trim((string)($this->payrollDetails[0][2] ?? ''))
+      : trim((string)$this->pay_day);
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $candidate);
+    $errors = DateTimeImmutable::getLastErrors();
+    if($date instanceof DateTimeImmutable && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))){
+      return $date->format('Y-m-d');
+    }
+    return date('Y-m-d');
   }
 
   public function insertToDatabase($columnMap, $column_data){
@@ -453,15 +672,14 @@ class Import{
 
       $response = array(
         "success" => 1,
-        "sql" => $sql,
         "message" => 'Succesfully Imported',
       );
 
     } catch (PDOException $e) {
+      error_log('Import::insertToDatabase failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "sql" => $sql,
-        "message" => $e->getMessage() 
+        "message" => "Unable to import DTR data."
       );
  
     }

@@ -39,6 +39,7 @@ $page_map = [
     3   => ['Payroll',                   'Payroll',     false],
     35  => ['Payroll Dashboard',         'Payroll',     true],
     36  => ['Payroll Summary',           'Payroll',     true],
+    38  => ['DTR Format Engine',         'Payroll',     true],
     31  => ['DTR Upload',                'Payroll',     true],
     32  => ['Other Additional',          'Payroll',     true],
     33  => ['Other Deduction',           'Payroll',     true],
@@ -66,7 +67,7 @@ $pages = [
                 1,11,12,13,14,15,16,17,18,19,20,
                 80,81,82,83,84,85,86,87,88,
                 5,51,52,53,54,55,56,
-                3,31,32,33,34,35,36,
+                3,31,32,33,34,35,36,38,
                 70,71,72,
             ], // Admin — all pages
     '2' => [
