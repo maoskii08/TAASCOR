@@ -1,0 +1,33 @@
+.env
+.env.*
+!.env.example
+
+# Local database credentials
+config/mysql-config.php
+
+# Runtime and generated artifacts
+*.log
+*.sql
+*.sql.gz
+*.dump
+*.bak
+*.zip
+*.tar
+*.tar.gz
+node_modules/
+vendor/
+cache/
+storage/
+tmp/
+temp/
+uploads/
+outputs/
+
+# Local-only access helpers
+local-dev-admin-session.php
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

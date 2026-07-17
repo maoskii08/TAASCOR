@@ -1,0 +1,147 @@
+body {
+    position: relative; 
+    background: url('../../assets/tpone-ratio-login-bg.svg');
+    background-repeat: no-repeat; 
+    background-size: cover;  
+    background-attachment: fixed; 
+    overflow-x: hidden; /* Hide scrollbars */  
+}
+
+/* card */
+.login-card {
+    border: 0;
+    border-radius: 27px;
+    box-shadow: rgba(0, 0, 0, 0.25) 0px 54px 55px, rgba(0, 0, 0, 0.12) 0px -12px 30px, rgba(0, 0, 0, 0.12) 0px 4px 6px, rgba(0, 0, 0, 0.17) 0px 12px 13px, rgba(0, 0, 0, 0.09) 0px -3px 5px;
+    overflow: hidden; 
+    width: 75%;
+    height: 55vh;
+    margin: auto;
+}
+
+.login-card-body {
+    padding: 12px 27px!important;
+}
+
+.login-card-img {
+    width: 100%;
+    height: 100%;
+    margin: -24% 0;
+}
+
+.left-side {
+    background: linear-gradient(to top right, #203764 0%, #5178c8 100%);
+    height: 52vh;
+    border-radius: 15px;
+}
+
+.left-side-text-wrapper {
+    padding: 20px 10px;
+    margin-top: 2%;
+}
+
+.left-side-subtext {
+    font-size: 1.1vw;
+    color: #e6e6e6;   
+    margin-bottom: -5px;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.left-side-text {
+    font-size: 1.9vw;
+    color: #fff;    
+    font-weight: 600;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.right-side-subtext {
+    font-size: 1vw;
+    color: #203764; 
+    margin-bottom: -5px;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.right-side-text {
+    font-size: 1.9vw;
+    color: #203764;    
+    font-weight: 600;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.right-side-description {
+    font-size: 0.8vw;
+    color: #777777;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/*form*/
+.material-textfield {
+    position: relative;  
+  }
+  
+  label {
+    position: absolute;
+    font-size: 0.9vw;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: white;
+    color: #203764;
+    padding: 0 0.3rem;
+    margin: 0 0.5rem;
+    transition: .1s ease-out;
+    transform-origin: left top;
+    pointer-events: none;
+  }
+
+  input {
+    font-size: 0.9vw;
+    width: 100%;
+    outline: none;
+    border: 1px solid gray;
+    border-radius: 5px;  
+    padding: 0.9rem 0.7rem;
+    color: #010101;
+    transition: 0.1s ease-out;
+    margin-top: 2px;
+  }
+
+  input:focus {
+    border-color: #203764;  
+  }
+
+  input:focus + label {
+    color: #203764;
+    top: 0;
+    transform: translateY(-50%) scale(.9);
+    font-weight: 600;
+  }
+
+  input:not(:placeholder-shown) + label {
+    top: 0;
+    transform: translateY(-50%) scale(.9);
+  }
+
+button {
+    padding: 10px 12px;
+    height: 45px;
+    margin: 4px 0;
+    font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif!important;
+    font-size: 0.9vw!important;
+    background-image: linear-gradient(to right, #203764, #5178c8, #203764, #5178c8);
+    color: #ffff!important;
+    cursor: pointer;
+    border-radius: 5px!important;
+    background-size: 300% 100%;
+    moz-transition: all .4s ease-in-out;
+    -o-transition: all .4s ease-in-out;
+    -webkit-transition: all .4s ease-in-out;
+    transition: all .4s ease-in-out;        
+}
+
+button:hover {
+    background-position: 100% 0;
+    moz-transition: all .4s ease-in-out;
+    -o-transition: all .4s ease-in-out;
+    -webkit-transition: all .4s ease-in-out;
+    transition: all .4s ease-in-out;
+}

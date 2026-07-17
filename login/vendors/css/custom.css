@@ -1,0 +1,153 @@
+*{
+    padding: 0%;
+    margin: 0%;
+    box-sizing: border-box;
+    font-family: "DM Sans", sans-serif;
+}
+
+body {
+    position: relative; 
+    background-image: url('../../assets/tpone-ratio-login-bg.svg'); 
+    background-repeat: no-repeat; 
+    background-size: cover;  
+    background-attachment: fixed; 
+    overflow-x: hidden; /* Hide scrollbars */  
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;500;600&display=swap'); 
+
+@font-face {
+    font-family: "DM Sans", sans-serif;
+    src: url("../fonts/DM_Sans/DMSans-VariableFont_opsz\,wght.ttf");
+}
+
+/*hr*/
+hr.hr-blue {
+    margin-left: 0;
+    height: 3px;
+    width: 25%;
+    opacity: .9;
+    background: linear-gradient(to right, #3047B0, #0087FF);
+}
+
+/* text */
+.text-blue {
+    color: #3047B0;
+}
+
+/* cards */
+.card-login {
+    border:0;
+    border-radius: 20px;       
+    /* box-shadow: rgb(30 30 30 / 10%) 0px 54px 55px, rgb(30 30 30 / 15%) 0px -12px 30px, rgb(30 30 30 / 12%) 0px 4px 6px, rgb(30 30 30 / 17%) 0px 12px 13px, rgb(30 30 30 / 9%) 0px -3px 5px; */
+    box-shadow: 4px 5px 18px -1px rgba(166,52,126,0.27);
+    overflow: hidden;
+    width: 65%;
+    height: 60vh;
+    left: 13%;
+}
+
+.title {
+    color:#3047B0;
+    font-size: 40px;
+    font-weight: 600;
+    margin-top: -20px;
+}
+
+.sub-title {
+    color: #303030;
+    font-size: 18px;
+    margin-top: -20px;
+}
+
+/*form*/
+.material-textfield {
+    position: relative;  
+  }
+  
+  label {
+    position: absolute;
+    font-size: 0.9vw;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background-color: white;
+    color: #A6347E;
+    padding:0 0.9rem;
+    margin: 0 0.5rem;
+    transition: .1s ease-out;
+    transform-origin: left top;
+    pointer-events: none;
+  }
+
+  input {
+    font-size: 0.9vw;
+    width: 100%;
+    outline: none;
+    border: 1px solid #ac94a3;
+    border-radius: 20px;
+    padding: 1rem 1.5rem;
+    color: #010101;
+    transition: 0.1s ease-out;
+    margin-top: 2px;
+  }
+
+  input:focus {
+    border-color: #A6347E;  
+  }
+
+  input:focus + label {
+    color: #A6347E;
+    top: 0;
+    transform: translateY(-50%) scale(.9);
+    font-weight: 600;
+  }
+
+  input:not(:placeholder-shown) + label {
+    top: 0;
+    transform: translateY(-50%) scale(.9);
+  }
+
+
+/*button*/
+button {
+    padding: 10px 12px;
+    height: 45px;
+    margin-top: 40px;
+    font-size: 14px!important;
+    font-family: 'Montserrat', sans-serif;
+    background-image: linear-gradient(to right, #A6347E, #BA5798, #BA5798, #BA5798);
+    color: #ffff!important;
+    cursor: pointer;
+    border-radius: 50px!important;
+    background-size: 300% 100%;
+    moz-transition: all .4s ease-in-out;
+    -o-transition: all .4s ease-in-out;
+    -webkit-transition: all .4s ease-in-out;
+    transition: all .4s ease-in-out;        
+}
+
+button:hover {
+    background-position: 100% 0;
+    moz-transition: all .4s ease-in-out;
+    -o-transition: all .4s ease-in-out;
+    -webkit-transition: all .4s ease-in-out;
+    transition: all .4s ease-in-out;
+}
+
+@media only screen and (max-width: 1500px) and (min-width: 1350px) {
+    .card-login {
+        height: 63vh;
+    }
+}
+
+@media only screen and (max-width: 1200px) and (min-width: 900px) {
+    .card-login {
+        height: 70vh;
+    }
+}
+
+.login-img {
+    max-width: 120%;
+    margin-left: -7%;
+}
