@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/EmployeeResolutionEngine.php';
+
 class EmployeeIdentityNotificationManager
 {
     public $db = null;
@@ -13,8 +15,10 @@ class EmployeeIdentityNotificationManager
     public function syncBatch(int $batchId, string $user): array
     {
         try {
-            $batch = $this->loadBatch($batchId);
+            $this->db->beginTransaction();
+            $batch = $this->loadBatch($batchId, true);
             if (!$batch) {
+                $this->db->rollBack();
                 return ['success' => 0, 'error' => 'Staged DTR batch was not found.'];
             }
 
@@ -32,7 +36,7 @@ class EmployeeIdentityNotificationManager
                 $raw = $this->decodePayload((string)$row['raw_payload']);
                 $sourceId = trim((string)($parsed['employee_identifier'] ?? ''));
                 $sourceName = $this->extractEmployeeName($parsed, $raw);
-                $resolution = $this->resolveIdentity($batch, $sourceId, $sourceName);
+                $resolution = $this->resolveIdentity($batch, $sourceId, $sourceName, $parsed);
 
                 if ($resolution['status'] === 'matched') {
                     $this->clearIdentityValidationErrors($stagingRowId);
@@ -58,6 +62,7 @@ class EmployeeIdentityNotificationManager
             $this->updateBatchGate($batchId, $openP0);
             $notification = $this->syncNotification($batch, $counts, $openP0);
             $this->syncRecipients((int)$notification['notification_id'], (string)$batch['uploaded_by']);
+            $this->db->commit();
 
             if (function_exists('log_action')) {
                 log_action(
@@ -76,6 +81,9 @@ class EmployeeIdentityNotificationManager
                 'notification_id' => (int)$notification['notification_id'],
             ];
         } catch (Throwable $error) {
+            if ($this->db && $this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
             error_log('Employee identity batch sync failed: ' . $error->getMessage());
             return ['success' => 0, 'error' => 'Unable to validate DTR employee identities.'];
         }
@@ -167,27 +175,32 @@ class EmployeeIdentityNotificationManager
         string $user
     ): array {
         try {
-            $exception = $this->loadException($exceptionId);
-            if (!$exception) {
-                return ['success' => 0, 'error' => 'Employee identity exception was not found.'];
-            }
             if (!in_array($action, ['map_existing', 'exclude'], true)) {
                 return ['success' => 0, 'error' => 'Select a supported resolution action.'];
             }
-            if ($action === 'exclude' && trim($reason) === '') {
-                return ['success' => 0, 'error' => 'An exclusion reason is required.'];
+            if (trim($reason) === '') {
+                return ['success' => 0, 'error' => 'An owner decision reason is required.'];
             }
 
             $this->db->beginTransaction();
+            $exception = $this->loadException($exceptionId, true);
+            if (!$exception || (string)$exception['status'] !== 'open') {
+                $this->db->rollBack();
+                return [
+                    'success' => 0,
+                    'error' => 'Only an open employee identity exception can be resolved.',
+                ];
+            }
             if ($action === 'map_existing') {
                 $employee = $this->employeeById($employeeId);
                 if (!$employee) {
                     $this->db->rollBack();
                     return ['success' => 0, 'error' => 'The selected HRIS employee was not found.'];
                 }
-                if (strcasecmp((string)$employee['status'], 'Active') !== 0) {
+                $mappingPeriod = $this->exceptionPeriod((int)$exception['staging_row_id']);
+                if (!$this->employeeActiveForPeriod($employee, $mappingPeriod['start'], $mappingPeriod['end'])) {
                     $this->db->rollBack();
-                    return ['success' => 0, 'error' => 'Only an active HRIS employee can be mapped.'];
+                    return ['success' => 0, 'error' => 'Only an HRIS employee active for the payroll period can be mapped.'];
                 }
                 $clientId = (int)$exception['client_id'];
                 if ($clientId > 0 && (int)$employee['client_id'] !== $clientId) {
@@ -199,17 +212,19 @@ class EmployeeIdentityNotificationManager
                     $this->db->rollBack();
                     return ['success' => 0, 'error' => 'A missing source employee ID cannot be mapped.'];
                 }
-                $map = $this->db->prepare("\n                    INSERT INTO employee_identity_map (\n                        client_id, source_namespace, source_employee_id, employee_id,\n                        status, approved_by, approved_at\n                    ) VALUES (\n                        :client_id, :source_namespace, :source_employee_id, :employee_id,\n                        'approved', :approved_by, NOW()\n                    )\n                    ON DUPLICATE KEY UPDATE\n                        employee_id = VALUES(employee_id),\n                        status = 'approved',\n                        approved_by = VALUES(approved_by),\n                        approved_at = NOW()\n                ");
+                $this->recordVersionedIdentityDecision($exception, $employeeId, $reason, $user);
+                $map = $this->db->prepare("\n                    INSERT INTO employee_identity_map (\n                        client_id, source_namespace, source_employee_id, employee_id,\n                        status, approved_by, approved_at, effective_from, effective_to\n                    ) VALUES (\n                        :client_id, :source_namespace, :source_employee_id, :employee_id,\n                        'approved', :approved_by, NOW(), :effective_from, NULL\n                    )\n                    ON DUPLICATE KEY UPDATE\n                        employee_id = VALUES(employee_id),\n                        status = 'approved',\n                        approved_by = VALUES(approved_by),\n                        approved_at = NOW(),\n                        effective_from = LEAST(COALESCE(effective_from, VALUES(effective_from)), VALUES(effective_from)),\n                        effective_to = NULL\n                ");
                 $map->execute([
                     ':client_id' => $clientId,
                     ':source_namespace' => $this->sourceNamespace($exception),
                     ':source_employee_id' => $sourceId,
                     ':employee_id' => $employeeId,
                     ':approved_by' => $user,
+                    ':effective_from' => $mappingPeriod['start'],
                 ]);
             }
 
-            $update = $this->db->prepare("\n                UPDATE dtr_employee_exceptions\n                SET status = :status,\n                    resolution_type = :resolution_type,\n                    resolved_employee_id = :resolved_employee_id,\n                    resolution_reason = :resolution_reason,\n                    resolved_by = :resolved_by,\n                    resolved_at = NOW()\n                WHERE id = :id\n            ");
+            $update = $this->db->prepare("\n                UPDATE dtr_employee_exceptions\n                SET status = :status,\n                    resolution_type = :resolution_type,\n                    resolved_employee_id = :resolved_employee_id,\n                    resolution_reason = :resolution_reason,\n                    resolved_by = :resolved_by,\n                    resolved_at = NOW()\n                WHERE id = :id AND status = 'open'\n            ");
             $update->execute([
                 ':status' => $action === 'exclude' ? 'excluded' : 'resolved',
                 ':resolution_type' => $action,
@@ -218,6 +233,9 @@ class EmployeeIdentityNotificationManager
                 ':resolved_by' => $user,
                 ':id' => $exceptionId,
             ]);
+            if ($update->rowCount() !== 1) {
+                throw new RuntimeException('The identity exception changed before this decision was saved.');
+            }
             if ($action === 'exclude') {
                 $excludeRow = $this->db->prepare("\n                    UPDATE dtr_upload_staging_rows\n                    SET validation_status = 'excluded'\n                    WHERE id = :staging_row_id\n                ");
                 $excludeRow->execute([':staging_row_id' => (int)$exception['staging_row_id']]);
@@ -236,7 +254,12 @@ class EmployeeIdentityNotificationManager
                 $this->db->rollBack();
             }
             error_log('Employee identity resolution failed: ' . $error->getMessage());
-            return ['success' => 0, 'error' => 'Unable to resolve the employee identity exception.'];
+            return [
+                'success' => 0,
+                'error' => $error instanceof DomainException
+                    ? $error->getMessage()
+                    : 'Unable to resolve the employee identity exception.',
+            ];
         }
     }
 
@@ -274,17 +297,25 @@ class EmployeeIdentityNotificationManager
         }
     }
 
-    private function resolveIdentity(array $batch, string $sourceId, string $sourceName): array
+    private function resolveIdentity(array $batch, string $sourceId, string $sourceName, array $parsed = []): array
     {
         $clientId = (int)$batch['client_id'];
         if ($sourceId === '') {
             return $this->resolution('missing', 'MISSING_HRIS_EMPLOYEE', []);
         }
 
-        $mapped = $this->approvedMap($clientId, $this->sourceNamespace($batch), $sourceId);
+        $periodStart = trim((string)($parsed['period_start'] ?? $parsed['work_date'] ?? date('Y-m-d')));
+        $periodEnd = trim((string)($parsed['period_end'] ?? $parsed['work_date'] ?? $periodStart));
+        $mapped = $this->approvedMap(
+            $clientId,
+            $this->sourceNamespace($batch),
+            $sourceId,
+            $periodStart,
+            $periodEnd
+        );
         if ($mapped) {
-            if (strcasecmp((string)$mapped['status'], 'Active') !== 0 ||
-                ($clientId > 0 && (int)$mapped['client_id'] !== $clientId)) {
+            if (!$this->employeeActiveForPeriod($mapped, $periodStart, $periodEnd)
+                || ($clientId > 0 && (int)$mapped['client_id'] !== $clientId)) {
                 return $this->resolution('status_conflict', 'HRIS_STATUS_CONFLICT', [$mapped]);
             }
             return $this->resolution('matched', '', [$mapped]);
@@ -294,7 +325,7 @@ class EmployeeIdentityNotificationManager
         if ((string)($batch['source_type'] ?? '') !== 'fuji_payroll_summary') {
             $direct = $this->directEmployees($sourceId, $clientId);
             foreach ($direct['scoped'] as $employee) {
-                if (strcasecmp((string)$employee['status'], 'Active') !== 0) {
+                if (!$this->employeeActiveForPeriod($employee, $periodStart, $periodEnd)) {
                     return $this->resolution('status_conflict', 'HRIS_STATUS_CONFLICT', [$employee]);
                 }
                 return $this->resolution('matched', '', [$employee]);
@@ -307,7 +338,7 @@ class EmployeeIdentityNotificationManager
             $second = isset($nameCandidates[1]) ? (float)$nameCandidates[1]['score'] : 0.0;
             if ($top >= 70.0) {
                 $nameCandidates[0]['ambiguous'] = ($top - $second) < 8.0;
-                if (strcasecmp((string)$nameCandidates[0]['status'], 'Active') !== 0) {
+                if (!$this->employeeActiveForPeriod($nameCandidates[0], $periodStart, $periodEnd)) {
                     return $this->resolution('status_conflict', 'HRIS_STATUS_CONFLICT', $nameCandidates);
                 }
                 return $this->resolution('mapping_review', 'EMPLOYEE_MAPPING_REVIEW', $nameCandidates);
@@ -478,14 +509,41 @@ class EmployeeIdentityNotificationManager
         if ($notificationId <= 0) {
             return;
         }
-        $users = $this->db->query("\n            SELECT employee_user_name\n            FROM taascor_user_access\n            WHERE access_level = 1 AND is_active = b'1'\n        ")->fetchAll(PDO::FETCH_COLUMN);
+        $users = $this->db->query("\n            SELECT employee_user_name\n            FROM taascor_user_access\n            WHERE access_level IN (1, 2, 3) AND is_active = b'1'\n        ")->fetchAll(PDO::FETCH_COLUMN);
         if (trim($uploader) !== '') {
             $users[] = trim($uploader);
         }
         $users = array_values(array_unique(array_filter(array_map('strval', $users))));
-        $stmt = $this->db->prepare("\n            INSERT IGNORE INTO notification_recipients (notification_id, user_name)\n            VALUES (:notification_id, :user_name)\n        ");
+        $stmt = $this->db->prepare("\n            INSERT INTO notification_recipients (notification_id, user_name, read_at, acknowledged_at)\n            VALUES (:notification_id, :user_name, NULL, NULL)\n            ON DUPLICATE KEY UPDATE read_at = NULL, acknowledged_at = NULL\n        ");
         foreach ($users as $user) {
             $stmt->execute([':notification_id' => $notificationId, ':user_name' => $user]);
+            $this->recordInAppDelivery($notificationId, $user);
+        }
+    }
+
+    private function recordInAppDelivery(int $notificationId, string $recipient): void
+    {
+        try {
+            if (!$this->tableExists('notification_delivery_outbox')) {
+                return;
+            }
+            $event = $this->db->prepare("\n                SELECT id, event_type, severity, title, message, batch_id, client_id,\n                       open_count, target_url, status, COALESCE(updated_at, created_at) AS revision_at\n                FROM notification_events\n                WHERE id = :notification_id\n            ");
+            $event->execute([':notification_id' => $notificationId]);
+            $payload = $event->fetch(PDO::FETCH_ASSOC);
+            if (!$payload) {
+                return;
+            }
+            $revision = hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $delivery = $this->db->prepare("\n                INSERT IGNORE INTO notification_delivery_outbox (\n                    delivery_uid, notification_id, idempotency_key, recipient, channel,\n                    delivery_payload, delivery_status, attempt_count, available_at, sent_at\n                ) VALUES (\n                    :delivery_uid, :notification_id, :idempotency_key, :recipient, 'in_app',\n                    :delivery_payload, 'sent', 1, NOW(), NOW()\n                )\n            ");
+            $delivery->execute([
+                ':delivery_uid' => $this->identityUid('NDEL'),
+                ':notification_id' => $notificationId,
+                ':idempotency_key' => hash('sha256', implode('|', [$notificationId, $recipient, 'in_app', $revision])),
+                ':recipient' => $recipient,
+                ':delivery_payload' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+        } catch (Throwable $error) {
+            error_log('Notification delivery audit failed: ' . $error->getMessage());
         }
     }
 
@@ -500,16 +558,167 @@ class EmployeeIdentityNotificationManager
         return $counts;
     }
 
-    private function approvedMap(int $clientId, string $namespace, string $sourceId): ?array
+    private function recordVersionedIdentityDecision(
+        array $exception,
+        int $employeeId,
+        string $reason,
+        string $user
+    ): void {
+        $clientId = (int)$exception['client_id'];
+        $namespace = $this->sourceNamespace($exception);
+        $sourceId = trim((string)$exception['source_employee_id']);
+
+        $current = $this->db->prepare("\n            SELECT employee_id\n            FROM employee_identity_map\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND source_employee_id = :source_employee_id\n            FOR UPDATE\n        ");
+        $current->execute([
+            ':client_id' => $clientId,
+            ':source_namespace' => $namespace,
+            ':source_employee_id' => $sourceId,
+        ]);
+        $currentEmployeeId = (int)$current->fetchColumn();
+        if ($currentEmployeeId > 0 && $currentEmployeeId !== $employeeId) {
+            throw new DomainException(
+                'This source employee ID already belongs to another approved HRIS employee. Revoke the prior alias before remapping it.'
+            );
+        }
+
+        if (!$this->tableExists('employee_identity_decisions') || !$this->tableExists('employee_identity_aliases')) {
+            throw new DomainException(
+                'Identity governance tables are unavailable. No reusable employee mapping was changed.'
+            );
+        }
+
+        $period = $this->exceptionPeriod((int)$exception['staging_row_id']);
+        $engine = new EmployeeResolutionEngine();
+        $normalizedId = $engine->normalizeIdentifier($sourceId);
+        $active = $this->db->prepare("\n            SELECT employee_id\n            FROM employee_identity_aliases\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND normalized_source_employee_id = :normalized_source_employee_id\n              AND alias_status = 'active'\n              AND effective_from <= :period_end\n              AND (effective_to IS NULL OR effective_to >= :period_start)\n            ORDER BY version_no DESC\n            FOR UPDATE\n        ");
+        $active->execute([
+            ':client_id' => $clientId,
+            ':source_namespace' => $namespace,
+            ':normalized_source_employee_id' => $normalizedId,
+            ':period_start' => $period['start'],
+            ':period_end' => $period['end'],
+        ]);
+        $existing = array_map('intval', $active->fetchAll(PDO::FETCH_COLUMN));
+        foreach ($existing as $existingEmployeeId) {
+            if ($existingEmployeeId !== $employeeId) {
+                throw new DomainException(
+                    'A period-effective alias already belongs to another HRIS employee. Revoke it before approving a replacement.'
+                );
+            }
+        }
+        if ($existing) {
+            return;
+        }
+
+        $decision = $this->db->prepare("\n            INSERT INTO employee_identity_decisions (\n                decision_uid, client_id, source_namespace, source_employee_id,\n                normalized_source_employee_id, employee_id, decision_type,\n                decision_status, confidence_score, evidence_payload, reason, decided_by\n            ) VALUES (\n                :decision_uid, :client_id, :source_namespace, :source_employee_id,\n                :normalized_source_employee_id, :employee_id, 'manual_exception_mapping',\n                'approved', NULL, :evidence_payload, :reason, :decided_by\n            )\n        ");
+        $decision->execute([
+            ':decision_uid' => $this->identityUid('IDDEC'),
+            ':client_id' => $clientId,
+            ':source_namespace' => $namespace,
+            ':source_employee_id' => $sourceId,
+            ':normalized_source_employee_id' => $normalizedId,
+            ':employee_id' => $employeeId,
+            ':evidence_payload' => json_encode([
+                'batch_id' => (int)$exception['batch_id'],
+                'exception_id' => (int)$exception['id'],
+                'exception_code' => (string)$exception['exception_code'],
+                'period_start' => $period['start'],
+                'period_end' => $period['end'],
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ':reason' => trim($reason),
+            ':decided_by' => $user,
+        ]);
+        $decisionId = (int)$this->db->lastInsertId();
+
+        $version = $this->db->prepare("\n            SELECT COALESCE(MAX(version_no), 0) + 1\n            FROM employee_identity_aliases\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND normalized_source_employee_id = :normalized_source_employee_id\n        ");
+        $version->execute([
+            ':client_id' => $clientId,
+            ':source_namespace' => $namespace,
+            ':normalized_source_employee_id' => $normalizedId,
+        ]);
+        $versionNo = (int)$version->fetchColumn();
+
+        $alias = $this->db->prepare("\n            INSERT INTO employee_identity_aliases (\n                alias_uid, client_id, source_namespace, source_employee_id,\n                normalized_source_employee_id, employee_id, decision_id, version_no,\n                alias_status, effective_from, effective_to, created_by\n            ) VALUES (\n                :alias_uid, :client_id, :source_namespace, :source_employee_id,\n                :normalized_source_employee_id, :employee_id, :decision_id, :version_no,\n                'active', :effective_from, NULL, :created_by\n            )\n        ");
+        $alias->execute([
+            ':alias_uid' => $this->identityUid('IDALIAS'),
+            ':client_id' => $clientId,
+            ':source_namespace' => $namespace,
+            ':source_employee_id' => $sourceId,
+            ':normalized_source_employee_id' => $normalizedId,
+            ':employee_id' => $employeeId,
+            ':decision_id' => $decisionId,
+            ':version_no' => $versionNo,
+            ':effective_from' => $period['start'],
+            ':created_by' => $user,
+        ]);
+    }
+
+    private function exceptionPeriod(int $stagingRowId): array
+    {
+        $stmt = $this->db->prepare('SELECT parsed_payload FROM dtr_upload_staging_rows WHERE id = :id');
+        $stmt->execute([':id' => $stagingRowId]);
+        $parsed = $this->decodePayload((string)$stmt->fetchColumn());
+        $start = trim((string)($parsed['period_start'] ?? $parsed['work_date'] ?? date('Y-m-d')));
+        $end = trim((string)($parsed['period_end'] ?? $parsed['work_date'] ?? $start));
+        if (!$this->isDate($start) || !$this->isDate($end) || $start > $end) {
+            throw new DomainException('The staged row does not have a valid payroll period for an effective-dated alias.');
+        }
+        return ['start' => $start, 'end' => $end];
+    }
+
+    private function tableExists(string $table): bool
+    {
+        $stmt = $this->db->prepare("\n            SELECT COUNT(*)\n            FROM INFORMATION_SCHEMA.TABLES\n            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name\n        ");
+        $stmt->execute([':table_name' => $table]);
+        return (int)$stmt->fetchColumn() > 0;
+    }
+
+    private function isDate(string $value): bool
+    {
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+        $errors = DateTimeImmutable::getLastErrors();
+        return $date instanceof DateTimeImmutable
+            && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0));
+    }
+
+    private function employeeActiveForPeriod(array $employee, string $periodStart, string $periodEnd): bool
+    {
+        $hireDate = trim((string)($employee['hire_date'] ?? ''));
+        $separationDate = trim((string)($employee['separation_date'] ?? ''));
+        $status = strtolower(trim((string)($employee['status'] ?? '')));
+        if ($hireDate !== '' && $hireDate !== '0000-00-00' && $hireDate > $periodEnd) {
+            return false;
+        }
+        if ($separationDate !== '' && $separationDate !== '0000-00-00' && $separationDate < $periodStart) {
+            return false;
+        }
+        return $status === 'active'
+            || ($status === 'terminated' && $separationDate !== '' && $separationDate >= $periodStart);
+    }
+
+    private function identityUid(string $prefix): string
+    {
+        return $prefix . '-' . gmdate('YmdHis') . '-' . bin2hex(random_bytes(12));
+    }
+
+    private function approvedMap(
+        int $clientId,
+        string $namespace,
+        string $sourceId,
+        string $periodStart,
+        string $periodEnd
+    ): ?array
     {
         if ($clientId <= 0) {
             return null;
         }
-        $stmt = $this->db->prepare("\n            SELECT e.*\n            FROM employee_identity_map m\n            INNER JOIN employee_list e ON e.employee_id = m.employee_id\n            WHERE m.client_id = :client_id\n              AND m.source_namespace = :source_namespace\n              AND m.source_employee_id = :source_employee_id\n              AND m.status = 'approved'\n              AND (m.effective_from IS NULL OR m.effective_from <= CURDATE())\n              AND (m.effective_to IS NULL OR m.effective_to >= CURDATE())\n            LIMIT 1\n        ");
+        $stmt = $this->db->prepare("\n            SELECT e.*\n            FROM employee_identity_map m\n            INNER JOIN employee_list e ON e.employee_id = m.employee_id\n            WHERE m.client_id = :client_id\n              AND m.source_namespace = :source_namespace\n              AND m.source_employee_id = :source_employee_id\n              AND m.status = 'approved'\n              AND (m.effective_from IS NULL OR m.effective_from <= :period_start)\n              AND (m.effective_to IS NULL OR m.effective_to >= :period_end)\n            LIMIT 1\n        ");
         $stmt->execute([
             ':client_id' => $clientId,
             ':source_namespace' => $namespace,
             ':source_employee_id' => $sourceId,
+            ':period_start' => $periodStart,
+            ':period_end' => $periodEnd,
         ]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
@@ -606,9 +815,9 @@ class EmployeeIdentityNotificationManager
         return '';
     }
 
-    private function loadBatch(int $batchId): ?array
+    private function loadBatch(int $batchId, bool $forUpdate = false): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT b.*, t.client_id, t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = t.client_id\n            WHERE b.id = :batch_id\n            LIMIT 1\n        ");
+        $stmt = $this->db->prepare("\n            SELECT b.*, t.client_id, t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = t.client_id\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
         $stmt->execute([':batch_id' => $batchId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
@@ -621,9 +830,9 @@ class EmployeeIdentityNotificationManager
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    private function loadException(int $exceptionId): ?array
+    private function loadException(int $exceptionId, bool $forUpdate = false): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT e.*, b.template_id, b.source_context, t.client_id\n            FROM dtr_employee_exceptions e\n            INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE e.id = :id\n            LIMIT 1\n        ");
+        $stmt = $this->db->prepare("\n            SELECT e.*, b.template_id, b.source_context, t.client_id\n            FROM dtr_employee_exceptions e\n            INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE e.id = :id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
         $stmt->execute([':id' => $exceptionId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;

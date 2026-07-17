@@ -10,9 +10,12 @@ ini_set('memory_limit', -1);
 
 require('../../config/db_connect.php');
 require('../model/Payslip.php');
+require_once('../fuji-reference-rules.php');
 
 $model = new Payslip;
 $model->db = $pdoConn;
+$model->actor = auth_user();
+$model->run_id = isset($_POST['run_id']) ? (int)$_POST['run_id'] : null;
 
 if($_POST['request'] == 'get-payroll-summary'){
     $response['columns'] = [];
@@ -34,13 +37,19 @@ if($_POST['request'] == 'get-payroll-summary'){
     if($getPayDay['success'] == 1){
         $islocked = $model->isLocked();
         $response['locked'] = $islocked['locked'];
+        $response['release_gate'] = $model->releaseGate();
+        $clientConfig = $pdoConn->prepare('SELECT client_id FROM taascor_client WHERE client_name = :client LIMIT 1');
+        $clientConfig->execute([':client' => $model->client]);
+        $configuredClientId = $clientConfig->fetchColumn();
+        $response['payslip_layout'] = payslip_layout_for_client(
+            (string)$model->client,
+            $configuredClientId === false ? null : (int)$configuredClientId
+        );
         
         $getList = $model->getPayrollSummary();
 
         if(isset($getList['error']) == false){
             $response['success'] = 1;
-            $response['sql1'] = $getList['sql1'];
-            $response['sql2'] = $getList['sql2'];
 
             if(count($getList['data']) > 0){
                 $response["columns"][] = ["data" => "action", "title" => "Action"];
@@ -104,7 +113,6 @@ if($_POST['request'] == 'get-payroll-summary'){
             }
         } else{
             $response['error'] = $getList['error'];
-            $response['sql'] = $getList['sql'];
         }
     }else{
         $response = $getPayDay;
@@ -128,11 +136,9 @@ if($_POST['request'] == 'get-payroll-summary'){
     $getMetroBank = $model->getMetroBank();
     if(isset($getMetroBank['error']) == false){
         $response['success'] = 1;
-        $response['sql'] = $getMetroBank['sql'];
         $response['data'] = $getMetroBank['data'];
     } else{
         $response['error'] = $getMetroBank['error'];
-        $response['sql'] = $getMetroBank['sql'];
     }
     echo json_encode($response);
 }else if($_POST['request'] == 'get-gcash'){
@@ -145,11 +151,9 @@ if($_POST['request'] == 'get-payroll-summary'){
     $getGcash = $model->getGcash();
     if(isset($getGcash['error']) == false){
         $response['success'] = 1;
-        $response['sql'] = $getGcash['sql'];
         $response['data'] = $getGcash['data'];
     } else{
         $response['error'] = $getGcash['error'];
-        $response['sql'] = $getGcash['sql'];
     }
     echo json_encode($response);
 }else if($_POST['request'] == 'get-pnb'){
@@ -162,12 +166,10 @@ if($_POST['request'] == 'get-payroll-summary'){
     $getPNB = $model->getPNB();
     if(isset($getPNB['error']) == false){
         $response['success'] = 1;
-        $response['sql'] = $getPNB['sql'];
         $response['total_amount'] = number_format($getPNB['total_amount'],2);
         $response['data'] = $getPNB['data'];
     } else{
         $response['error'] = $getPNB['error'];
-        $response['sql'] = $getPNB['sql'];
     }
     echo json_encode($response);
 }else if($_POST['request'] == 'get-pay-day'){

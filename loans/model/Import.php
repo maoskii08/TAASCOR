@@ -13,23 +13,26 @@ class Import{
         
     try {
       $sql = "CALL sp_calculate_dtr(
-                    '{$this->client_name}'
-                    ,'{$this->pay_day}'
-                    ,'{$this->cut_off}'
+                    :client_name
+                    ,:pay_day
+                    ,:cut_off
               )";
       $stmt = $this->db->prepare($sql);
-      $stmt->execute();
+      $stmt->execute([
+        ':client_name' => $this->client_name,
+        ':pay_day' => $this->pay_day,
+        ':cut_off' => $this->cut_off,
+      ]);
 
       $response = array(
-        "success" => 1,
-        "sql" => $sql 
+        "success" => 1
       );
 
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
+      error_log('Loans Import::spCalculateDTR failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "message" => $e->getMessage(), 
-        "sql" => $sql 
+        "error" => "Unable to calculate payroll. No further changes were made."
       );
  
     }
@@ -48,11 +51,9 @@ class Import{
           if($insert['success'] == 0){
             $this->db->rollBack();
             $response['success'] = 0;
-            $response['message'] = 'Insert Syntax Error!';
-            $response['error'] = $insert['message'];
-            $response['sql'] = $insert['sql'];
+            $response['message'] = 'Unable to import loan data.';
+            $response['error'] = 'The loan import was rolled back.';
             return $response;
-            exit();
           }
 
       }
@@ -61,10 +62,13 @@ class Import{
       $response['success'] = 1;
       // $response['sql'] = $insert['sql'];
       $response['message'] = 'Success';
-    } catch (PDOException $e) {
-      $this->db->rollBack();
+    } catch (Throwable $e) {
+      if ($this->db->inTransaction()) {
+        $this->db->rollBack();
+      }
+      error_log('Loans Import::add failed: ' . $e->getMessage());
       $response['success'] = 0;
-      $response['error'] = "An error occurred. Please contact your administrator.";
+      $response['error'] = "Unable to import loan data.";
     }
     return $response;
   }
@@ -232,15 +236,14 @@ class Import{
 
       $response = array(
         "success" => 1,
-        "sql" => $sql,
         "message" => 'Succesfully Imported',
       );
 
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
+      error_log('Loans Import::insertToDatabase failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "sql" => $sql,
-        "message" => $e->getMessage() 
+        "message" => "Unable to import loan data."
       );
  
     }

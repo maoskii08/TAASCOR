@@ -47,8 +47,22 @@ The private June 16-30 sample reconciled all 691 DTR employees for basic pay, co
 
 This validates earnings only. Statutory contributions, loans, other deductions, taxable pay, and net pay still require HRIS payroll rules and owner-approved employee mappings.
 
+## Fail-closed payroll release comparison
+
+After exporting the candidate run to a private JSON file, compare every employee and batch total before approval:
+
+```powershell
+python tools/fuji-reconciliation/payroll_release_gate.py `
+  --oracle-regression tools/fuji-reconciliation/private-output/payslip_oracle_regression.json `
+  --actual-payroll C:\private\fuji-candidate-payroll.json `
+  --output tools/fuji-reconciliation/private-output/payroll_release_gate.json
+```
+
+The command fails unless the employee population, component amounts, gross-to-net equation, deduction/loan ledgers, source metadata, and ruleset hashes reconcile. `--allow-missing-ledgers` is diagnostic only and must not be used for payroll release.
+
 ## Tests
 
 ```powershell
 python tools/fuji-reconciliation/test_reconciliation.py
+python tools/fuji-reconciliation/test_payroll_release_gate.py
 ```

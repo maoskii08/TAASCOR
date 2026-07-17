@@ -11,3 +11,12 @@ function fuji_reference_late_undertime_amount($lateAmount, $undertimeAmount): fl
 {
     return (float)$lateAmount + (float)$undertimeAmount;
 }
+
+function payslip_layout_for_client(string $clientName, ?int $clientId = null): string
+{
+    $normalized = strtoupper((string)preg_replace('/[^A-Z0-9]+/i', '', trim($clientName)));
+    if ($clientId === 264 || str_contains($normalized, 'FUJIFILM')) {
+        return 'fuji-reference';
+    }
+    return 'default';
+}

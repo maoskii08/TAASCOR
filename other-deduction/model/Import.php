@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../dtr-upload/model/PayrollLockGuard.php';
 
 class Import{
 
@@ -12,24 +13,22 @@ class Import{
   public function spDeduction(){
         
     try {
-      $sql = "CALL sp_payroll_deduction(
-                    '{$this->client_name}'
-                    ,'{$this->pay_day}'
-                    ,'{$this->cut_off}'
-              )";
+      $sql = "CALL sp_payroll_deduction(:client_name, :pay_day, :cut_off)";
       $stmt = $this->db->prepare($sql);
-      $stmt->execute();
+      $stmt->execute([
+        ':client_name' => $this->client_name,
+        ':pay_day' => $this->pay_day,
+        ':cut_off' => $this->cut_off,
+      ]);
 
       $response = array(
-        "success" => 1,
-        "sql" => $sql 
+        "success" => 1
       );
 
     } catch (PDOException $e) {
       $response = array(
         "success" => 0,
-        "message" => $e->getMessage(), 
-        "sql" => $sql 
+        "message" => "Unable to calculate payroll deductions."
       );
  
     }
@@ -39,6 +38,14 @@ class Import{
 
   public function add(array $data, $columnMap){
     try {
+      $scope = $this->validatedPayrollScope();
+      if (($scope['success'] ?? 0) !== 1) {
+        return $scope;
+      }
+      $this->payrollDetails = [[
+        $scope['client_name'], $scope['cut_off'], $scope['pay_day'],
+        $scope['start_date'], $scope['end_date'],
+      ]];
       $this->db->beginTransaction();
 
       $columnMap = $columnMap;
@@ -50,7 +57,6 @@ class Import{
             $response['success'] = 0;
             $response['message'] = 'Insert Syntax Error!';
             $response['error'] = $insert['message'];
-            $response['sql'] = $insert['sql'];
             return $response;
             exit();
           }
@@ -67,6 +73,11 @@ class Import{
       $response['error'] = "An error occurred. Please contact your administrator.";
     }
     return $response;
+  }
+
+  public function validatedPayrollScope(): array
+  {
+    return PayrollLockGuard::normalizePayrollDetails($this->payrollDetails);
   }
 
   public function insertToDatabase($columnMap, $column_data){
@@ -96,13 +107,12 @@ class Import{
         }
       }
 
-      foreach($this->payrollDetails as $row){
-        $client_name = $row[0];
-        $cut_off = $row[1];
-        $pay_day = $row[2];
-        $start_date = $row[3];
-        $end_date = $row[4];
-      }
+      $row = $this->payrollDetails[0];
+      $client_name = $row[0];
+      $cut_off = $row[1];
+      $pay_day = $row[2];
+      $start_date = $row[3];
+      $end_date = $row[4];
    
       $sql = "INSERT INTO payroll_other_deduction
               (
@@ -141,15 +151,13 @@ class Import{
 
       $response = array(
         "success" => 1,
-        "sql" => $sql,
         "message" => 'Succesfully Imported',
       );
 
     } catch (PDOException $e) {
       $response = array(
         "success" => 0,
-        "sql" => $sql,
-        "message" => $e->getMessage() 
+        "message" => "Unable to import payroll deduction."
       );
  
     }

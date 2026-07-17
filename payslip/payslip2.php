@@ -24,6 +24,19 @@ function pdf_text($value): string
 class PDF extends FPDF
 {
     public bool $fujiReferenceLayout = false;
+    public bool $preReleasePreview = false;
+
+    public function Footer()
+    {
+        if (!$this->preReleasePreview) {
+            return;
+        }
+        $this->SetY(-8);
+        $this->SetFont('Arial', 'B', 7);
+        $this->SetTextColor(170, 25, 80);
+        $this->Cell(0, 4, 'PRE-RELEASE PREVIEW - NOT A PUBLISHED PAYSLIP', 0, 0, 'C');
+        $this->SetTextColor(0, 0, 0);
+    }
 
     function PayslipTable($y_position, $data = array(), $otherAdditional = array(), $otherDeduction = array(), $loanList = array())
     {   
@@ -363,13 +376,20 @@ $db = $pdoConn;
 $clientName = $_GET["cn"] ?? '';
 $cutOff = $_GET["co"] ?? '';
 $payDay = $_GET["pd"] ?? '';
-$layout = ($_GET['layout'] ?? '') === 'fuji-reference' ? 'fuji-reference' : 'default';
+$clientConfig = $db->prepare('SELECT client_id FROM taascor_client WHERE client_name = :client LIMIT 1');
+$clientConfig->execute([':client' => $clientName]);
+$configuredClientId = $clientConfig->fetchColumn();
+$layout = payslip_layout_for_client(
+    $clientName,
+    $configuredClientId === false ? null : (int)$configuredClientId
+);
 
 $bankName = 'null';
 $payType = 'null';
 $clientLocation = 'null';
 
 $where = "";
+$mainWhere = "";
 $join = "";
 $filterParams = [];
 
@@ -380,6 +400,49 @@ try {
     http_response_code(400);
     header('Content-Type: text/plain; charset=utf-8');
     exit('Invalid payslip filter.');
+}
+
+$serverRequiresPreview = false;
+try {
+    $settingsTable = $db->prepare("\n        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'payroll_import_client_settings'
+    ");
+    $settingsTable->execute();
+    if ((int)$settingsTable->fetchColumn() > 0 && $configuredClientId !== false) {
+        $enrollment = $db->prepare("\n            SELECT smart_flow_enabled
+            FROM payroll_import_client_settings
+            WHERE client_id = :client_id
+        ");
+        $enrollment->execute([':client_id' => (int)$configuredClientId]);
+        if ((int)$enrollment->fetchColumn() === 1) {
+            $serverRequiresPreview = true;
+            $released = $db->prepare("\n                SELECT l.run_id
+                FROM payroll_import_release_locks l
+                INNER JOIN payroll_import_runs r ON r.id = l.run_id
+                WHERE l.client_name = :client_name
+                  AND l.pay_day = :pay_day
+                  AND r.status = 'released'
+                  AND r.release_status = 'released'
+                LIMIT 1
+            ");
+            $released->execute([':client_name' => $clientName, ':pay_day' => $payDay]);
+            $releasedRunId = (int)$released->fetchColumn();
+            if ($releasedRunId > 0) {
+                $sealedQuery = ['run_id' => $releasedRunId];
+                if ($employee_ident !== null) {
+                    $sealedQuery['employee_id'] = $employee_ident;
+                }
+                header('Location: payslip-sealed.php?' . http_build_query($sealedQuery), true, 302);
+                exit();
+            }
+        }
+    }
+} catch (Throwable $error) {
+    error_log('Unable to determine sealed payslip route: ' . $error->getMessage());
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Payslip release status could not be verified. Please try again.');
 }
 
 if(isset($_GET['pt']) == true){
@@ -396,22 +459,26 @@ if($clientLocationId !== null){
 
 if($employee_ident !== null){
     $where .= " AND a.employee_id = :employee_id";
+    $mainWhere .= " AND a.employee_id = :employee_id";
     $filterParams[':employee_id'] = $employee_ident;
 }
 
 if($payType != 'null'){
-    $where .= " AND pay_type = :pay_type";
+    $where .= " AND s.pay_type = :pay_type";
+    $mainWhere .= " AND s.pay_type = :pay_type";
     $filterParams[':pay_type'] = $payType;
 }
 
 if($bankName != 'null'){
-    $where .= " AND bank_name = :bank_name";
+    $where .= " AND s.bank_name = :bank_name";
+    $mainWhere .= " AND s.bank_name = :bank_name";
     $filterParams[':bank_name'] = $bankName;
 }
 
 if($clientLocation != 'null'){
     $join .= "INNER JOIN employee_list b ON a.employee_id = b.employee_id";
-    $where .= " AND client_location_id = :client_location_id";
+    $where .= " AND b.client_location_id = :client_location_id";
+    $mainWhere .= " AND c.client_location_id = :client_location_id";
     $filterParams[':client_location_id'] = $clientLocationId;
 }
 
@@ -615,7 +682,7 @@ $sql = "SELECT
         where a.client_name = :client
             and a.cut_off = :cut_off
             and a.pay_day = :pay_day
-            $where";
+            $mainWhere";
 
 $stmt = $db->prepare($sql);
 bind_report_params($stmt, array_merge([
@@ -629,6 +696,7 @@ $counter = 0;
 
 $pdf = new PDF();
 $pdf->fujiReferenceLayout = $layout === 'fuji-reference';
+$pdf->preReleasePreview = $serverRequiresPreview || (string)($_GET['preview'] ?? '') === '1';
 $pdf->AddPage();
 
 $tables_per_page = 3; 

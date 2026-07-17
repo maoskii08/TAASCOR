@@ -8,6 +8,7 @@ header('content-type: application/json');
 ini_set('memory_limit', -1);
 require '../../config/db_connect.php';
 require('../model/Import.php');
+require_once('../model/PayrollLockGuard.php');
 
 $model = new Import;
 $model->db = $pdoConn;
@@ -17,20 +18,25 @@ $model->client_name = $_POST['client_name'];
 $model->cut_off = $_POST['cut_off'];
 $model->pay_day = $_POST['pay_day'];
 
-$identityGate = $model->validateEmployeeIdentityScope();
-if(($identityGate['success'] ?? 0) !== 1){
-    $response = $identityGate;
-}else{
-    $validate = $model->validate();
-    if($validate['success'] == 1){
-        $response = $model->spCalculateDTR();
-        $response['identity_gate'] = $identityGate['identity_gate'];
-    }else{
+$response = (new PayrollLockGuard($pdoConn))->runUnlockedMutation(
+    (string)$model->client_name,
+    (string)$model->pay_day,
+    function () use ($model): array {
+        $identityGate = $model->validateEmployeeIdentityScope();
+        if (($identityGate['success'] ?? 0) !== 1) {
+            return $identityGate;
+        }
+        $validate = $model->validate();
+        if (($validate['success'] ?? 0) === 1) {
+            $result = $model->spCalculateDTR();
+            $result['identity_gate'] = $identityGate['identity_gate'];
+            return $result;
+        }
         // Never delete failed rows and continue with a partial payroll calculation.
-        $response = $validate;
-        $response['partial_payroll_prevented'] = true;
+        $validate['partial_payroll_prevented'] = true;
+        return $validate;
     }
-}
+);
 
 
 session_write_close();

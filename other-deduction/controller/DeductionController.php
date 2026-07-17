@@ -10,6 +10,7 @@ ini_set('memory_limit', -1);
 
 require('../../config/db_connect.php');
 require('../model/Deduction.php');
+require_once('../../dtr-upload/model/PayrollLockGuard.php');
 
 $model = new Deduction;
 $model->db = $pdoConn;
@@ -34,7 +35,6 @@ if($_POST['request'] == 'get-deduction-list'){
 
         if(isset($getList['error']) == false){
             $response['success'] = 1;
-            $response['sql'] = $getList['sql'];
 
             if(count($getList['data']) > 0){
                 foreach ($getList['data'] as $key => $row) {
@@ -55,7 +55,6 @@ if($_POST['request'] == 'get-deduction-list'){
             }   
         } else{
             $response['error'] = $getList['error'];
-            $response['sql'] = $getList['sql'];
         }
     }else{
         $response = $getPayDay;
@@ -75,10 +74,20 @@ if($_POST['request'] == 'get-deduction-list'){
     $model->cut_off = $_POST['cut_off'];
     $model->pay_day = $_POST['pay_day'];
 
-    $response = $model->deleteDeduction();
-    if($response['success'] == 1){
-        $response = $model->spDeleteDeduction();
-    }
+    $response = (new PayrollLockGuard($pdoConn))->runUnlockedMutation(
+        (string)$model->client_name,
+        (string)$model->pay_day,
+        function () use ($model, $pdoConn): array {
+            $pdoConn->beginTransaction();
+            $result = $model->deleteDeduction();
+            if (($result['success'] ?? 0) === 1) {
+                $result = $model->spDeleteDeduction();
+            }
+            if (($result['success'] ?? 0) === 1) { $pdoConn->commit(); }
+            else { $pdoConn->rollBack(); }
+            return $result;
+        }
+    );
     echo json_encode($response);
 }else if($_POST['request'] == 'add-individual'){
     $model->employee_id = $_POST["employee_id"];
@@ -91,10 +100,20 @@ if($_POST['request'] == 'get-deduction-list'){
     $model->start_date = $_POST['start_date'];
     $model->end_date = $_POST['end_date'];
 
-    $response = $model->individualAdditional();
-    if($response['success'] == 1){
-        $response = $model->spIndividualAdditional();
-    }
+    $response = (new PayrollLockGuard($pdoConn))->runUnlockedMutation(
+        (string)$model->client_name,
+        (string)$model->pay_day,
+        function () use ($model, $pdoConn): array {
+            $pdoConn->beginTransaction();
+            $result = $model->individualAdditional();
+            if (($result['success'] ?? 0) === 1) {
+                $result = $model->spIndividualAdditional();
+            }
+            if (($result['success'] ?? 0) === 1) { $pdoConn->commit(); }
+            else { $pdoConn->rollBack(); }
+            return $result;
+        }
+    );
     echo json_encode($response);
 }else if($_POST['request'] == 'get-client-location'){
     $model->client = $_POST["client_selected"];

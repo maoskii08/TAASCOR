@@ -43,4 +43,10 @@ $firstKey = $duplicateKey->invoke($adapter, 'SOURCE-1', '2026-06-16', '2026-06-3
 $secondKey = $duplicateKey->invoke($adapter, 'SOURCE-1', '2026-06-16', '2026-06-30', '2026-07-14');
 check($firstKey !== $secondKey, 'row-level duplicate metadata includes the pay date');
 
+$normalizeDate = new ReflectionMethod(FujiPayrollSummaryAdapter::class, 'normalizeWorkbookDate');
+check(
+    $normalizeDate->invoke($adapter, '25569') === '1970-01-01',
+    'Fuji Excel hire-date serials are normalized before staging'
+);
+
 echo "RESULT: Fuji duplicate detection includes pay date.\n";

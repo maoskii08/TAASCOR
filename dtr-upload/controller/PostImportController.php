@@ -9,6 +9,7 @@ header('content-type: application/json');
 ini_set('memory_limit', -1);
 require('../../config/db_connect.php');
 require('../model/Import.php');
+require_once('../model/PayrollLockGuard.php');
 
 $model = new Import;
 $model->db = $pdoConn;
@@ -16,11 +17,27 @@ $model->db = $pdoConn;
 
 $response = [];
 $rawData = json_decode(file_get_contents("php://input"), true);
-$data = $rawData['data'];
-$columnMap = $rawData['column_map'];
-$model->payrollDetails = $rawData['payrollDetails'];
+if (!is_array($rawData)) {
+    echo json_encode(['success' => 0, 'error' => 'Invalid import payload.'], JSON_PRETTY_PRINT);
+    exit();
+}
+$data = is_array($rawData['data'] ?? null) ? $rawData['data'] : [];
+$columnMap = is_array($rawData['column_map'] ?? null) ? $rawData['column_map'] : [];
+$model->payrollDetails = is_array($rawData['payrollDetails'] ?? null) ? $rawData['payrollDetails'] : [];
 
-$response = $model->add($data, $columnMap);
+$payrollScope = $model->validatedPayrollScope();
+if (($payrollScope['success'] ?? 0) !== 1) {
+    echo json_encode($payrollScope, JSON_PRETTY_PRINT);
+    exit();
+}
+
+$response = (new PayrollLockGuard($pdoConn))->runUnlockedMutation(
+    (string)$payrollScope['client_name'],
+    (string)$payrollScope['pay_day'],
+    function () use ($model, $data, $columnMap): array {
+        return $model->add($data, $columnMap);
+    }
+);
 echo json_encode ($response, JSON_PRETTY_PRINT);
 
 

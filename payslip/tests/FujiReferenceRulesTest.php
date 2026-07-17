@@ -24,5 +24,17 @@ check(
     abs(fuji_reference_late_undertime_amount(42.25, 17.75) - 60.0) < 0.0000001,
     'combines the two deduction amounts shown on the Fuji payslip'
 );
+check(
+    payslip_layout_for_client('Fujifilm Optiocs Phils. Inc') === 'fuji-reference',
+    'selects the Fuji reference layout from the configured client name'
+);
+check(
+    payslip_layout_for_client('Any Client', 264) === 'fuji-reference',
+    'selects the Fuji reference layout from the configured client ID'
+);
+check(
+    payslip_layout_for_client('Another Client') === 'default',
+    'keeps the default payslip layout for other clients'
+);
 
 echo "RESULT: Fuji reference payslip rules passed.\n";

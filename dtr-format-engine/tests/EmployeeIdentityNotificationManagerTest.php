@@ -141,12 +141,36 @@ try {
     check($notification['status'] === 'resolved' && (int)$notification['open_count'] === 0, 'notification resolves when the identity queue is cleared');
     $read = $manager->markNotificationRead((int)$notification['id'], $user);
     check(($read['success'] ?? 0) === 1, 'notification read state is persisted');
+    $delivery = $db->prepare("\n        SELECT COUNT(*)\n        FROM notification_delivery_outbox\n        WHERE notification_id = :notification_id\n          AND recipient = :recipient\n          AND channel = 'in_app'\n          AND delivery_status = 'sent'\n    ");
+    $delivery->execute([':notification_id' => (int)$notification['id'], ':recipient' => $user]);
+    check((int)$delivery->fetchColumn() >= 1, 'in-app notification delivery is recorded idempotently in the durable outbox');
+
+    $expectedOwners = (int)$db->query("\n        SELECT COUNT(DISTINCT employee_user_name)\n        FROM taascor_user_access\n        WHERE access_level IN (1, 2, 3) AND is_active = b'1'\n    ")->fetchColumn();
+    $actualOwners = $db->prepare("\n        SELECT COUNT(DISTINCT r.user_name)\n        FROM notification_recipients r\n        INNER JOIN taascor_user_access u\n          ON u.employee_user_name COLLATE utf8mb4_unicode_ci = r.user_name COLLATE utf8mb4_unicode_ci\n        WHERE r.notification_id = :notification_id\n          AND u.access_level IN (1, 2, 3)\n          AND u.is_active = b'1'\n    ");
+    $actualOwners->execute([':notification_id' => (int)$notification['id']]);
+    check((int)$actualOwners->fetchColumn() === $expectedOwners, 'active Admin, HR, and Payroll owners receive the identity notification');
 
     echo "RESULT: Employee identity notification flow passed.\n";
 } finally {
     if ($batchId > 0) {
         $deleteBatch = $db->prepare('DELETE FROM dtr_upload_batches WHERE id = :id');
         $deleteBatch->execute([':id' => $batchId]);
+    }
+    $governanceTable = $db->prepare("\n        SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES\n        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name\n    ");
+    $governanceTable->execute([':table_name' => 'employee_identity_aliases']);
+    if ((int)$governanceTable->fetchColumn() > 0) {
+        $deleteAliases = $db->prepare("\n            DELETE FROM employee_identity_aliases\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND source_employee_id = :source_employee_id\n        ");
+        $deleteAliases->execute([
+            ':client_id' => $clientId,
+            ':source_namespace' => 'template:' . $templateId,
+            ':source_employee_id' => $sourceMappingId,
+        ]);
+        $deleteDecisions = $db->prepare("\n            DELETE FROM employee_identity_decisions\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND source_employee_id = :source_employee_id\n        ");
+        $deleteDecisions->execute([
+            ':client_id' => $clientId,
+            ':source_namespace' => 'template:' . $templateId,
+            ':source_employee_id' => $sourceMappingId,
+        ]);
     }
     $deleteMap = $db->prepare("\n        DELETE FROM employee_identity_map\n        WHERE client_id = :client_id\n          AND source_namespace = :source_namespace\n          AND source_employee_id = :source_employee_id\n    ");
     $deleteMap->execute([

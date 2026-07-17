@@ -1,7 +1,7 @@
 <?php
 
 require_once('../../includes/auth_guard.php');
-auth_require_role([1]);
+auth_require_role([1, 2, 3]);
 header('Cache-Control: no-cache, no-store, must-revalidate');
 header('Pragma: no-cache');
 header('Expires: 0');
@@ -15,6 +15,8 @@ require('../model/RealSampleAdapter.php');
 require('../model/PayrollBasisPreview.php');
 require('../model/EmployeeIdentityNotificationManager.php');
 require('../model/FujiPayrollSummaryAdapter.php');
+require('../model/SmartEmployeeResolutionService.php');
+require('../model/PayrollImportRunManager.php');
 
 $model = new TemplateManager;
 $model->db = $pdoConn;
@@ -28,10 +30,239 @@ $identityManager = new EmployeeIdentityNotificationManager;
 $identityManager->db = $pdoConn;
 $fujiAdapter = new FujiPayrollSummaryAdapter;
 $fujiAdapter->db = $pdoConn;
-$request = $_GET['request'] ?? $_POST['request'] ?? '';
+$smartResolution = new SmartEmployeeResolutionService;
+$smartResolution->db = $pdoConn;
+$payrollImportRuns = new PayrollImportRunManager;
+$payrollImportRuns->db = $pdoConn;
+$request = $_POST['request'] ?? $_GET['request'] ?? '';
 $user = auth_user() ?: 'local_admin';
 
+$mutatingRequests = [
+    'save-template', 'deactivate-template', 'upload-synthetic', 'upload-fuji-summary',
+    'clear-synthetic-batches', 'run-real-sample-adapters', 'clear-real-sample-adapters',
+    'save-adapter-approval', 'run-payroll-basis-preview', 'sync-employee-identities',
+    'approve-smart-employee-cohort', 'create-payroll-import-run',
+    'approve-payroll-import-run', 'cancel-payroll-import-run',
+    'mark-notification-read', 'resolve-employee-exception', 'set-smart-payroll-enrollment',
+    'save-payroll-rule-set',
+];
+if (in_array($request, $mutatingRequests, true) && ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    http_response_code(405);
+    header('Allow: POST');
+    echo json_encode(['success' => 0, 'error' => 'This action requires POST.']);
+    exit;
+}
+
+$adminOnlyRequests = [
+    'save-template',
+    'deactivate-template',
+    'clear-synthetic-batches',
+    'run-real-sample-adapters',
+    'clear-real-sample-adapters',
+    'save-adapter-approval',
+    'set-smart-payroll-enrollment',
+    'save-payroll-rule-set',
+];
+if (in_array($request, $adminOnlyRequests, true) && auth_level() !== 1) {
+    http_response_code(403);
+    echo json_encode([
+        'success' => 0,
+        'error' => 'Administrator approval is required for template and adapter configuration changes.',
+    ]);
+    exit;
+}
+
+$identityOwnerRequests = ['approve-smart-employee-cohort', 'resolve-employee-exception'];
+if (in_array($request, $identityOwnerRequests, true) && !in_array(auth_level(), [1, 2], true)) {
+    http_response_code(403);
+    echo json_encode(['success' => 0, 'error' => 'Admin or HR identity-owner approval is required.']);
+    exit;
+}
+
+$payrollOwnerRequests = [
+    'create-payroll-import-run', 'approve-payroll-import-run', 'cancel-payroll-import-run',
+];
+if (in_array($request, $payrollOwnerRequests, true) && !in_array(auth_level(), [1, 3], true)) {
+    http_response_code(403);
+    echo json_encode(['success' => 0, 'error' => 'Admin or Payroll access is required for payroll-run actions.']);
+    exit;
+}
+
+function approved_payroll_ruleset($db, int $batchId): array
+{
+    $stmt = $db->prepare("\n        SELECT t.client_id, r.parsed_payload
+        FROM dtr_upload_batches b
+        INNER JOIN dtr_format_templates t ON t.id = b.template_id
+        INNER JOIN dtr_upload_staging_rows r ON r.batch_id = b.id
+        WHERE b.id = :batch_id AND r.validation_status <> 'excluded'
+        ORDER BY r.id
+    ");
+    $stmt->execute([':batch_id' => $batchId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    if (!$rows) {
+        return ['success' => 0, 'error' => 'The staged batch has no eligible rows.'];
+    }
+    $clientId = (int)$rows[0]['client_id'];
+    $payDates = [];
+    foreach ($rows as $row) {
+        $parsed = json_decode((string)$row['parsed_payload'], true);
+        $payDate = trim((string)($parsed['pay_date'] ?? ''));
+        if ($payDate !== '') {
+            $payDates[$payDate] = true;
+        }
+    }
+    if (count($payDates) !== 1) {
+        return ['success' => 0, 'error' => 'The staged batch needs one unambiguous pay date before rule selection.'];
+    }
+    $payDate = array_key_first($payDates);
+    $ruleset = $db->prepare("\n        SELECT * FROM payroll_import_rule_sets
+        WHERE client_id = :client_id AND ruleset_status = 'approved'
+          AND effective_from <= :pay_date
+          AND (effective_to IS NULL OR effective_to >= :pay_date)
+        ORDER BY effective_from DESC, id DESC
+        LIMIT 2
+    ");
+    $ruleset->execute([':client_id' => $clientId, ':pay_date' => $payDate]);
+    $matches = $ruleset->fetchAll(PDO::FETCH_ASSOC);
+    if (count($matches) !== 1) {
+        return [
+            'success' => 0,
+            'error_code' => 'APPROVED_RULESET_REQUIRED',
+            'error' => count($matches) === 0
+                ? 'No approved, effective-dated payroll ruleset is configured for this client and pay date.'
+                : 'More than one approved payroll ruleset overlaps this pay date. Resolve the governance conflict first.',
+        ];
+    }
+    $rules = json_decode((string)$matches[0]['rules_payload'], true);
+    if (!is_array($rules)
+        || !hash_equals((string)$matches[0]['rules_hash'], hash('sha256', PayrollImportRunManager::canonicalJson($rules)))) {
+        return ['success' => 0, 'error_code' => 'RULESET_INTEGRITY_FAILED', 'error' => 'The approved payroll ruleset hash is invalid.'];
+    }
+    return [
+        'success' => 1,
+        'pay_date' => $payDate,
+        'ruleset_key' => (string)$matches[0]['ruleset_key'],
+        'ruleset_version' => (string)$matches[0]['ruleset_version'],
+        'rules' => $rules,
+    ];
+}
+
 switch ($request) {
+    case 'save-payroll-rule-set':
+        $clientId = (int)($_POST['client_id'] ?? 0);
+        $key = trim((string)($_POST['ruleset_key'] ?? ''));
+        $version = trim((string)($_POST['ruleset_version'] ?? ''));
+        $effectiveFrom = trim((string)($_POST['effective_from'] ?? ''));
+        $effectiveTo = trim((string)($_POST['effective_to'] ?? '')) ?: null;
+        $rules = json_decode((string)($_POST['rules_payload'] ?? ''), true);
+        $dateValid = static function (?string $value): bool {
+            if ($value === null) { return true; }
+            $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+            $errors = DateTimeImmutable::getLastErrors();
+            return $date instanceof DateTimeImmutable
+                && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0));
+        };
+        if ($clientId <= 0 || $key === '' || $version === '' || !is_array($rules) || !$rules
+            || !$dateValid($effectiveFrom) || !$dateValid($effectiveTo)
+            || ($effectiveTo !== null && $effectiveTo < $effectiveFrom)) {
+            echo json_encode(['success' => 0, 'error' => 'A valid client, version, effective window, and non-empty rule manifest are required.']);
+            break;
+        }
+        foreach ($rules as $rule) {
+            if (!is_array($rule) || trim((string)($rule['rule_type'] ?? '')) === ''
+                || trim((string)($rule['rule_key'] ?? '')) === ''
+                || trim((string)($rule['rule_version'] ?? '')) === ''
+                || !array_key_exists('snapshot', $rule)) {
+                echo json_encode(['success' => 0, 'error' => 'Every rule needs type, key, version, and an immutable snapshot.']);
+                break 2;
+            }
+        }
+        $payload = PayrollImportRunManager::canonicalJson($rules);
+        try {
+            $stmt = $pdoConn->prepare("\n                INSERT INTO payroll_import_rule_sets (
+                    client_id, ruleset_key, ruleset_version, effective_from, effective_to,
+                    rules_payload, rules_hash, ruleset_status, approved_by, approved_at
+                ) VALUES (
+                    :client_id, :ruleset_key, :ruleset_version, :effective_from, :effective_to,
+                    :rules_payload, :rules_hash, 'approved', :approved_by, NOW()
+                )
+            ");
+            $stmt->execute([
+                ':client_id' => $clientId,
+                ':ruleset_key' => $key,
+                ':ruleset_version' => $version,
+                ':effective_from' => $effectiveFrom,
+                ':effective_to' => $effectiveTo,
+                ':rules_payload' => $payload,
+                ':rules_hash' => hash('sha256', $payload),
+                ':approved_by' => $user,
+            ]);
+            echo json_encode(['success' => 1, 'ruleset_id' => (int)$pdoConn->lastInsertId(), 'rules_hash' => hash('sha256', $payload)]);
+        } catch (Throwable $error) {
+            error_log('Payroll ruleset save failed: ' . $error->getMessage());
+            echo json_encode(['success' => 0, 'error' => 'The ruleset version already exists or could not be saved.']);
+        }
+        break;
+    case 'smart-payroll-enrollment':
+        $clientId = (int)($_GET['client_id'] ?? $_POST['client_id'] ?? 0);
+        $stmt = $pdoConn->prepare("\n            SELECT c.client_id, c.client_name, COALESCE(s.smart_flow_enabled, 0) AS smart_flow_enabled,
+                   s.enabled_by, s.enabled_at, s.rollout_notes
+            FROM taascor_client c
+            LEFT JOIN payroll_import_client_settings s ON s.client_id = c.client_id
+            WHERE c.client_id = :client_id
+        ");
+        $stmt->execute([':client_id' => $clientId]);
+        echo json_encode(['success' => 1, 'enrollment' => $stmt->fetch(PDO::FETCH_ASSOC) ?: null]);
+        break;
+    case 'set-smart-payroll-enrollment':
+        $clientId = (int)($_POST['client_id'] ?? 0);
+        $enabled = (string)($_POST['enabled'] ?? '0') === '1';
+        $notes = trim((string)($_POST['notes'] ?? ''));
+        if ($clientId <= 0 || $notes === '') {
+            echo json_encode(['success' => 0, 'error' => 'Client and rollout decision notes are required.']);
+            break;
+        }
+        if (!$enabled) {
+            echo json_encode([
+                'success' => 0,
+                'error_code' => 'SMART_PAYROLL_DOWNGRADE_BLOCKED',
+                'error' => 'Smart payroll enrollment is a one-way governed cutover. Rollback requires an audited migration, not an application toggle.',
+            ]);
+            break;
+        }
+        if ($enabled) {
+            $rules = $pdoConn->prepare("\n                SELECT COUNT(*) FROM payroll_import_rule_sets
+                WHERE client_id = :client_id
+                  AND ruleset_status = 'approved'
+                  AND effective_from <= CURDATE()
+                  AND (effective_to IS NULL OR effective_to >= CURDATE())
+            ");
+            $rules->execute([':client_id' => $clientId]);
+            if ((int)$rules->fetchColumn() === 0) {
+                echo json_encode(['success' => 0, 'error' => 'Approve an effective-dated payroll ruleset before enrollment.']);
+                break;
+            }
+        }
+        $stmt = $pdoConn->prepare("\n            INSERT INTO payroll_import_client_settings (
+                client_id, smart_flow_enabled, enabled_by, enabled_at, rollout_notes
+            ) VALUES (:client_id, :enabled, :enabled_by, :enabled_at, :rollout_notes)
+            ON DUPLICATE KEY UPDATE
+                smart_flow_enabled = VALUES(smart_flow_enabled),
+                enabled_by = VALUES(enabled_by), enabled_at = VALUES(enabled_at),
+                rollout_notes = VALUES(rollout_notes)
+        ");
+        $stmt->execute([
+            ':client_id' => $clientId,
+            ':enabled' => 1,
+            ':enabled_by' => $user,
+            ':enabled_at' => date('Y-m-d H:i:s'),
+            ':rollout_notes' => $notes,
+        ]);
+        if (function_exists('log_action')) {
+            log_action('Smart payroll one-way enrollment enabled for client ' . $clientId, $pdoConn);
+        }
+        echo json_encode(['success' => 1, 'client_id' => $clientId, 'smart_flow_enabled' => true]);
+        break;
     case 'lookups':
         echo json_encode($model->getLookups());
         break;
@@ -147,6 +378,71 @@ switch ($request) {
                 (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0)
             ),
         ]);
+        break;
+    case 'smart-employee-resolution-preview':
+        @set_time_limit(180);
+        echo json_encode($smartResolution->previewBatch(
+            (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0)
+        ));
+        break;
+    case 'approve-smart-employee-cohort':
+        @set_time_limit(180);
+        $approval = $smartResolution->approveSafeCohort(
+            (int)($_POST['batch_id'] ?? 0),
+            trim((string)($_POST['reason'] ?? '')),
+            $user
+        );
+        if (!empty($approval['success'])) {
+            $approval['identity_gate'] = $identityManager->syncBatch(
+                (int)($_POST['batch_id'] ?? 0),
+                $user
+            );
+        }
+        echo json_encode($approval);
+        break;
+    case 'create-payroll-import-run':
+        @set_time_limit(180);
+        $batchId = (int)($_POST['batch_id'] ?? 0);
+        $ruleset = approved_payroll_ruleset($pdoConn, $batchId);
+        if (($ruleset['success'] ?? 0) !== 1) {
+            echo json_encode($ruleset);
+            break;
+        }
+        echo json_encode($payrollImportRuns->createAndCanonicalizeFromStagedBatch(
+            $batchId,
+            [
+                'run_type' => 'guarded_dtr_import',
+                'pay_date' => (string)$ruleset['pay_date'],
+                'ruleset_key' => (string)$ruleset['ruleset_key'],
+                'ruleset_version' => (string)$ruleset['ruleset_version'],
+                'rules' => (array)$ruleset['rules'],
+            ],
+            $user
+        ));
+        break;
+    case 'latest-payroll-import-run':
+        echo json_encode($payrollImportRuns->getLatestRunForBatch(
+            (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0)
+        ));
+        break;
+    case 'payroll-import-run-status':
+        echo json_encode($payrollImportRuns->getReleaseStatus(
+            (int)($_GET['run_id'] ?? $_POST['run_id'] ?? 0)
+        ));
+        break;
+    case 'approve-payroll-import-run':
+        echo json_encode($payrollImportRuns->approveRun(
+            (int)($_POST['run_id'] ?? 0),
+            $user
+        ));
+        break;
+    case 'cancel-payroll-import-run':
+        echo json_encode($payrollImportRuns->transitionRun(
+            (int)($_POST['run_id'] ?? 0),
+            'cancelled',
+            $user,
+            trim((string)($_POST['reason'] ?? ''))
+        ));
         break;
     case 'notifications':
         echo json_encode($identityManager->listNotifications(

@@ -7,11 +7,11 @@
     'use strict';
 
     // ── CSRF: inject X-CSRF-Token header on every jQuery AJAX POST ────────
-    var csrfToken = $('#csrf_token').val() || '';
-
-    $.ajaxSetup({
-        beforeSend: function (xhr, settings) {
-            if (settings.type && settings.type.toUpperCase() === 'POST') {
+    $(document).ajaxSend(function (_event, xhr, settings) {
+        var method = String(settings.type || settings.method || 'GET').toUpperCase();
+        if (['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(method) !== -1) {
+            var csrfToken = $('#csrf_token').val() || '';
+            if (csrfToken) {
                 xhr.setRequestHeader('X-CSRF-Token', csrfToken);
             }
         }

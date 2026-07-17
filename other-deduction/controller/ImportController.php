@@ -8,6 +8,7 @@ header('content-type: application/json');
 ini_set('memory_limit', -1);
 require '../../config/db_connect.php';
 require('../model/Import.php');
+require_once('../../dtr-upload/model/PayrollLockGuard.php');
 
 $model = new Import;
 $model->db = $pdoConn;
@@ -17,7 +18,11 @@ $model->client_name = $_POST['client_name'];
 $model->cut_off = $_POST['cut_off'];
 $model->pay_day = $_POST['pay_day'];
 
-$response = $model->spDeduction();
+$response = (new PayrollLockGuard($pdoConn))->runUnlockedMutation(
+    (string)$model->client_name,
+    (string)$model->pay_day,
+    function () use ($model): array { return $model->spDeduction(); }
+);
 
 session_write_close();
 echo json_encode ($response, JSON_PRETTY_PRINT);

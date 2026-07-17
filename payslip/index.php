@@ -1,3 +1,7 @@
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1, 3]);
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
   data-assets-path="../../assets/" data-template="vertical-menu-template-free" data-style="light">
@@ -214,6 +218,16 @@
                     <button id="payslipBtn" class="btn btn-md btn-primary">Generate Payslip</button>
                     <button id="postBtn" class="btn btn-md btn-danger">Post Payroll</button>
                     <button id="clearBtn" class="btn btn-md btn-secondary">Clear</button>
+                  </div>
+                </div>
+
+                <div class="row mt-2" id="smartRunSelectorRow" style="display:none">
+                  <div class="col-sm-6">
+                    <label class="form-label fw-bold" for="payrollRun">Authoritative payroll run:</label>
+                    <select class="form-select" id="payrollRun">
+                      <option value="">Select the approved sealed run</option>
+                    </select>
+                    <small class="text-muted">Posting is tied to this exact reconciled run and its verified payslip artifacts.</small>
                   </div>
                 </div>
 

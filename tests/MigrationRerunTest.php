@@ -57,6 +57,7 @@ try {
         '20260621_02_dtr_staging_columns.sql',
         '20260621_03_payroll_basis_preview.sql',
         '20260716_employee_identity_notifications.sql',
+        '20260717_01_payroll_import_run_foundation.sql',
     ];
     foreach ([1, 2] as $pass) {
         foreach ($migrations as $migration) {
@@ -77,6 +78,20 @@ try {
         'dtr_employee_exceptions',
         'notification_events',
         'notification_recipients',
+        'payroll_import_runs',
+        'payroll_import_run_inputs',
+        'employee_identity_decisions',
+        'employee_identity_aliases',
+        'payroll_import_run_rows',
+        'payroll_import_run_rule_versions',
+        'payroll_import_release_checks',
+        'payroll_import_payslip_artifacts',
+        'payroll_import_outbox',
+        'notification_delivery_outbox',
+        'payroll_import_client_settings',
+        'payroll_import_rule_sets',
+        'payroll_import_legacy_scope_bindings',
+        'payroll_import_release_locks',
     ];
     $tableQuery = $db->prepare("\n        SELECT COUNT(*)\n        FROM INFORMATION_SCHEMA.TABLES\n        WHERE TABLE_SCHEMA = :schema_name AND TABLE_NAME = :table_name\n    ");
     foreach ($expectedTables as $table) {

@@ -184,6 +184,7 @@ $(document).on("click","#dtrTbl #removeBenBtn",function() {
             let formdata = new FormData();
             formdata.append("request", 'remove-govt-benefits');
             formdata.append("employee_ident", employeeID);
+            formdata.append("client_name", payrollDetails[0][0]);
             formdata.append("pay_day", pay_day);
             
             $.ajax({
@@ -321,6 +322,7 @@ $(document).on("click","#dtrTbl #deleteRecord",function() {
             let formdata = new FormData();
             formdata.append("request", 'delete-employee-dtr');
             formdata.append("employee_ident", employeeID);
+            formdata.append("client_name", payrollDetails[0][0]);
             formdata.append("pay_day", pay_day);
             
             $.ajax({
@@ -1108,5 +1110,4 @@ function formatDate(dateString) {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
-
 

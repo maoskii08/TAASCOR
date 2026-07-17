@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/PayrollLockGuard.php';
+
 class DTR
 {
     public $db = null;
@@ -8,6 +10,7 @@ class DTR
     public $end_date = null;
     public $cut_off = null;
 
+    public $access_level = null;
     public $client_access = null; 
 
     public $cutoffArray = array();
@@ -54,20 +57,42 @@ class DTR
         try {
             $where = "";
             $where2 = "";
+            $queryParams = [
+                ':active_client' => $this->client,
+                ':orphan_client' => $this->client,
+                ':orphan_pay_day' => $this->pay_day,
+                ':orphan_cut_off' => $this->cut_off,
+                ':join_client' => $this->client,
+                ':join_pay_day' => $this->pay_day,
+                ':join_cut_off' => $this->cut_off,
+                ':scope_client' => $this->client,
+            ];
 
-            $where .= " AND e.client_name = '{$this->client}'";
-            $where2 .= " AND c.client_name = '{$this->client}'";
-            $where2 .= " AND c.pay_day = '{$this->pay_day}'";
-            $where2 .= " AND c.cut_off = '{$this->cut_off}'";
+            $where .= " AND e.client_name = :active_client";
+            $where2 .= " AND c.client_name = :orphan_client";
+            $where2 .= " AND c.pay_day = :orphan_pay_day";
+            $where2 .= " AND c.cut_off = :orphan_cut_off";
 
             if($this->client_location != 'null'){
-                $where .= " AND client_location_id = {$this->client_location}";
-                $where2 .= " AND client_location_id = {$this->client_location}";
+                $locationId = filter_var($this->client_location, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                if ($locationId === false) {
+                    throw new InvalidArgumentException('Invalid client location filter.');
+                }
+                $where .= " AND a.client_location_id = :active_location_id";
+                $where2 .= " AND a.client_location_id = :orphan_location_id";
+                $queryParams[':active_location_id'] = (int)$locationId;
+                $queryParams[':orphan_location_id'] = (int)$locationId;
             }
 
             if($this->branch != 'null'){
-                $where .= " AND branch_id = {$this->branch}";
-                $where2 .= " AND branch_id = {$this->branch}";
+                $branchId = filter_var($this->branch, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                if ($branchId === false) {
+                    throw new InvalidArgumentException('Invalid branch filter.');
+                }
+                $where .= " AND a.branch_id = :active_branch_id";
+                $where2 .= " AND a.branch_id = :orphan_branch_id";
+                $queryParams[':active_branch_id'] = (int)$branchId;
+                $queryParams[':orphan_branch_id'] = (int)$branchId;
             }
 
             $sql = "SELECT 
@@ -107,9 +132,9 @@ class DTR
                     FROM employee_list a
                     INNER JOIN employee_salary b ON a.employee_id = b.employee_id
                     LEFT JOIN dtr_upload c ON a.employee_id = c.employee_id
-                                    AND c.client_name = '{$this->client}'
-                                    AND c.pay_day = '{$this->pay_day}'
-                                    AND c.cut_off = '{$this->cut_off}'
+                                    AND c.client_name = :join_client
+                                    AND c.pay_day = :join_pay_day
+                                    AND c.cut_off = :join_cut_off
                     LEFT JOIN taascor_client e ON a.client_id = e.client_id
                     WHERE a.status = 'Active' $where
 
@@ -157,12 +182,12 @@ class DTR
                             LEFT JOIN taascor_client e ON a.client_id = e.client_id
                             WHERE a.employee_id = c.employee_id
                                 AND a.status = 'Active'
-                                AND e.client_name = '{$this->client}'
+                                AND e.client_name = :scope_client
                         ) $where2
                     ";
 
             $stmt = $this->db->prepare($sql);
-            $stmt->execute();
+            $stmt->execute($queryParams);
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             if($stmt->rowCount() > 0){
@@ -205,9 +230,9 @@ class DTR
                     FROM employee_list a
                     INNER JOIN employee_salary b ON a.employee_id = b.employee_id
                     LEFT JOIN payroll_gross_variables c ON a.employee_id = c.employee_id
-                                    AND c.client_name = '{$this->client}'
-                                    AND c.pay_day = '{$this->pay_day}'
-                                    AND c.cut_off = '{$this->cut_off}'
+                                    AND c.client_name = :join_client
+                                    AND c.pay_day = :join_pay_day
+                                    AND c.cut_off = :join_cut_off
                     LEFT JOIN taascor_client e ON a.client_id = e.client_id
                     WHERE a.status = 'Active' $where
 
@@ -252,12 +277,12 @@ class DTR
                             LEFT JOIN taascor_client e ON a.client_id = e.client_id
                             WHERE a.employee_id = c.employee_id
                                 AND a.status = 'Active'
-                                AND e.client_name = '{$this->client}'
+                                AND e.client_name = :scope_client
                         ) $where2
                     ";
 
             $stmt = $this->db->prepare($sql);
-            $stmt->execute();
+            $stmt->execute($queryParams);
             $data2 = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             if($stmt->rowCount() > 0){
@@ -280,32 +305,36 @@ class DTR
         
         try {
           $sql = "CALL sp_calculate_indv_dtr(
-                        '{$this->client}'
-                        ,'{$this->pay_day}'
-                        ,'{$this->cut_off}'
-                        ,'{$this->employee_ident}'
+                        :client
+                        ,:pay_day
+                        ,:cut_off
+                        ,:employee_id
                   )";
           if($this->cut_off == 'Weekly'){
             $sql = "CALL sp_calculate_indv_dtr_weekly(
-              '{$this->client}'
-              ,'{$this->pay_day}'
-              ,'{$this->cut_off}'
-              ,'{$this->employee_ident}'
+              :client
+              ,:pay_day
+              ,:cut_off
+              ,:employee_id
             )";
           }
           $stmt = $this->db->prepare($sql);
-          $stmt->execute();
+          $stmt->execute([
+            ':client' => $this->client,
+            ':pay_day' => $this->pay_day,
+            ':cut_off' => $this->cut_off,
+            ':employee_id' => $this->employee_ident,
+          ]);
     
           $response = array(
-            "success" => 1,
-            "sql" => $sql 
+            "success" => 1
           );
     
         } catch (PDOException $e) {
+          error_log('DTR::spCalculateDTR failed: ' . $e->getMessage());
           $response = array(
             "success" => 0,
-            "error" => $e->getMessage(), 
-            "sql" => $sql 
+            "error" => "Unable to calculate DTR."
           );
      
         }
@@ -497,10 +526,12 @@ class DTR
                         employer_sss_mpf = 0,
                         employer_sss_ec = 0 
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
@@ -511,10 +542,12 @@ class DTR
                             ELSE ROUND((gross_income - total_additional),2)
                         END
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
@@ -548,10 +581,12 @@ class DTR
                                 END 
                         END
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
@@ -559,10 +594,12 @@ class DTR
                         net_pay = ROUND(gross_income - 
                                         ROUND((employee_tax + total_deduction + total_tardy + employee_loan),2),2) 
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
@@ -587,42 +624,52 @@ class DTR
 
             $sql = "DELETE FROM dtr_upload 
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
             $sql = "DELETE FROM payroll_gross_variables 
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
             $sql = "DELETE FROM payroll_other_additional
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
 
             $sql = "DELETE FROM payroll_other_deduction
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
             $sql = "DELETE FROM payroll_summary
                     WHERE employee_id = :employee_id
+                    AND client_name = :client
                     AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_id', $this->employee_ident, PDO::PARAM_STR);
+            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
@@ -648,14 +695,25 @@ class DTR
             $where = "";
             $join = "";
             $empList = false;
+            $filterParams = [];
             if($this->client_location != 'null'){
+                $locationId = filter_var($this->client_location, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                if ($locationId === false) {
+                    throw new InvalidArgumentException('Invalid client location filter.');
+                }
                 $empList = true;
-                $where .= " AND b.client_location_id = {$this->client_location}";
+                $where .= " AND b.client_location_id = :client_location_id";
+                $filterParams[':client_location_id'] = (int)$locationId;
             }
 
             if($this->branch != 'null'){
+                $branchId = filter_var($this->branch, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+                if ($branchId === false) {
+                    throw new InvalidArgumentException('Invalid branch filter.');
+                }
                 $empList = true;
-                $where .= " AND b.branch_id = {$this->branch}";
+                $where .= " AND b.branch_id = :branch_id";
+                $filterParams[':branch_id'] = (int)$branchId;
             }
 
             if($empList){
@@ -670,6 +728,9 @@ class DTR
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) {
+                $stmt->bindValue($name, $value, PDO::PARAM_INT);
+            }
             $stmt->execute();
 
             $sql = "DELETE a FROM payroll_gross_variables a
@@ -680,6 +741,9 @@ class DTR
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) {
+                $stmt->bindValue($name, $value, PDO::PARAM_INT);
+            }
             $stmt->execute();
 
             $sql = "DELETE a FROM payroll_other_additional a
@@ -690,6 +754,9 @@ class DTR
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) {
+                $stmt->bindValue($name, $value, PDO::PARAM_INT);
+            }
             $stmt->execute();
 
 
@@ -701,6 +768,9 @@ class DTR
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) {
+                $stmt->bindValue($name, $value, PDO::PARAM_INT);
+            }
             $stmt->execute();
 
             $sql = "DELETE a FROM payroll_summary a
@@ -711,6 +781,9 @@ class DTR
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) {
+                $stmt->bindValue($name, $value, PDO::PARAM_INT);
+            }
             $stmt->execute();
 
 
@@ -726,31 +799,10 @@ class DTR
     }
 
     public function isLocked(){
-
-        $response = [];
-
-        try {
-            $sql = "SELECT 1 FROM locked_payroll 
-                        WHERE client_name = :client
-                        and pay_day = :pay_day";
-            $stmt = $this->db->prepare($sql);
-            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
-            $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
-            $stmt->execute();
-            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            if ($stmt->rowCount() > 0) {    
-                $response['locked'] = true;
-            } else {
-                $response['locked'] = false;
-            }
-    
-                    } catch (\Throwable $th) {
-            $response['success'] = 0;
-            $response['error'] = "An error occurred. Please contact your administrator.";
-                    }
-    
-        return $response;
+        return (new PayrollLockGuard($this->db))->check(
+            (string)$this->client,
+            (string)$this->pay_day
+        );
     }
 
     public function getPayDay(){

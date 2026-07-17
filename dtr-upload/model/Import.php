@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/PayrollLockGuard.php';
 
 class Import{
 
@@ -237,6 +238,17 @@ class Import{
 
   public function add(array $data, $columnMap){
     try {
+      $scope = $this->validatedPayrollScope();
+      if(($scope['success'] ?? 0) !== 1){
+        return $scope;
+      }
+      $this->payrollDetails = [[
+        $scope['client_name'],
+        $scope['cut_off'],
+        $scope['pay_day'],
+        $scope['start_date'],
+        $scope['end_date'],
+      ]];
       $identity = $this->resolveEmployeeIdentitiesForImport($data, $columnMap);
       if(($identity['success'] ?? 0) !== 1){
         return $identity;
@@ -271,6 +283,15 @@ class Import{
       $response['error'] = "An error occurred. Please contact your administrator.";
     }
     return $response;
+  }
+
+  public function validatedPayrollScope(): array
+  {
+    $scope = PayrollLockGuard::normalizePayrollDetails($this->payrollDetails);
+    if (($scope['success'] ?? 0) !== 1) {
+      $scope['error_code'] = 'INVALID_PAYROLL_SCOPE';
+    }
+    return $scope;
   }
 
   public function validateEmployeeIdentityScope(){
@@ -513,13 +534,12 @@ class Import{
         }
       }
 
-      foreach($this->payrollDetails as $row){
-        $client_name = $row[0];
-        $cut_off = $row[1];
-        $pay_day = $row[2];
-        $start_date = $row[3];
-        $end_date = $row[4];
-      }
+      $row = $this->payrollDetails[0];
+      $client_name = $row[0];
+      $cut_off = $row[1];
+      $pay_day = $row[2];
+      $start_date = $row[3];
+      $end_date = $row[4];
    
       $sql = "INSERT INTO dtr_upload
               (

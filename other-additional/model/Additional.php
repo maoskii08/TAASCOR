@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/../../dtr-upload/model/PayrollLockGuard.php';
 class Additional
 {
     public $db = null;
@@ -22,25 +23,19 @@ class Additional
     public function spDeleteAdditional(){
             
         try {
-        $sql = "CALL sp_delete_additional_deduction(
-                        '{$this->client_name}'
-                        ,'{$this->pay_day}'
-                        ,'{$this->cut_off}'
-                        ,{$this->employee_id}
-                )";
+        $sql = "CALL sp_delete_additional_deduction(:client_name, :pay_day, :cut_off, :employee_id)";
         $stmt = $this->db->prepare($sql);
-        $stmt->execute();
+        $stmt->execute([':client_name' => $this->client_name, ':pay_day' => $this->pay_day, ':cut_off' => $this->cut_off, ':employee_id' => $this->employee_id]);
 
         $response = array(
-            "success" => 1,
-            "sql" => $sql 
+            "success" => 1
         );
 
         } catch (PDOException $e) {
+            error_log('Additional::spDeleteAdditional failed: ' . $e->getMessage());
             $response = array(
                 "success" => 0,
-                "error" => $e->getMessage(), 
-                "sql" => $sql 
+                "error" => "Unable to recalculate payroll additions."
             );
         }
         return $response;
@@ -50,25 +45,19 @@ class Additional
     public function spIndividualAdditional(){
             
         try {
-        $sql = "CALL sp_payroll_additional_indv(
-                        '{$this->client_name}'
-                        ,'{$this->pay_day}'
-                        ,'{$this->cut_off}'
-                        ,{$this->employee_id}
-                )";
+        $sql = "CALL sp_payroll_additional_indv(:client_name, :pay_day, :cut_off, :employee_id)";
         $stmt = $this->db->prepare($sql);
-        $stmt->execute();
+        $stmt->execute([':client_name' => $this->client_name, ':pay_day' => $this->pay_day, ':cut_off' => $this->cut_off, ':employee_id' => $this->employee_id]);
 
         $response = array(
-            "success" => 1,
-            "sql" => $sql 
+            "success" => 1
         );
 
         } catch (PDOException $e) {
+            error_log('Additional::spIndividualAdditional failed: ' . $e->getMessage());
             $response = array(
                 "success" => 0,
-                "error" => $e->getMessage(), 
-                "sql" => $sql 
+                "error" => "Unable to recalculate payroll additions."
             );
         }
         return $response;
@@ -80,13 +69,16 @@ class Additional
 
         try {
             $where = "";
+            $filterParams = [];
 
             if($this->client_location != 'null'){
-                $where .= " AND client_location_id = {$this->client_location}";
+                $where .= " AND b.client_location_id = :client_location_id";
+                $filterParams[':client_location_id'] = (int)$this->client_location;
             }
 
             if($this->branch != 'null'){
-                $where .= " AND branch_id = {$this->branch}";
+                $where .= " AND b.branch_id = :branch_id";
+                $filterParams[':branch_id'] = (int)$this->branch;
             }
 
             $sql = "SELECT c.id,
@@ -110,6 +102,7 @@ class Additional
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':cut_off', $this->cut_off, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            foreach ($filterParams as $name => $value) { $stmt->bindValue($name, $value, PDO::PARAM_INT); }
             $stmt->execute();
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -169,8 +162,7 @@ class Additional
             $stmt->execute();
 
             $response = array(
-                "success" => 1,
-                "sql" => $sql
+                "success" => 1
             );
 
         } catch (PDOException $e) {
@@ -188,14 +180,15 @@ class Additional
         try{   
 
             $sql = "DELETE FROM payroll_other_additional
-                    where id = :id"; 
+                    WHERE id = :id AND client_name = :client_name AND pay_day = :pay_day";
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':id', $this->id, PDO::PARAM_INT);
+            $stmt->bindParam(':client_name', $this->client_name, PDO::PARAM_STR);
+            $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
             $stmt->execute();
 
             $response = array(
-                "success" => 1,
-                "sql" => $sql
+                "success" => 1
             );
 
         } catch (PDOException $e) {
@@ -207,31 +200,7 @@ class Additional
     }
 
     public function isLocked(){
-
-        $response = [];
-
-        try {
-            $sql = "SELECT 1 FROM locked_payroll 
-                        WHERE client_name = :client
-                        and pay_day = :pay_day";
-            $stmt = $this->db->prepare($sql);
-            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
-            $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
-            $stmt->execute();
-            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-            if ($stmt->rowCount() > 0) {    
-                $response['locked'] = true;
-            } else {
-                $response['locked'] = false;
-            }
-    
-                    } catch (\Throwable $th) {
-            $response['success'] = 0;
-            $response['error'] = "An error occurred. Please contact your administrator.";
-                    }
-    
-        return $response;
+        return (new PayrollLockGuard($this->db))->check((string)$this->client, (string)$this->pay_day);
     }
 
     public function getPayDay(){

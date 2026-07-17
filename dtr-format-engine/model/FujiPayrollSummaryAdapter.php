@@ -125,6 +125,7 @@ class FujiPayrollSummaryAdapter
             for ($column = 6; $column <= 20; $column++) {
                 $dailyAttendance[$this->columnLetter($column)] = $this->cell($cells, $column);
             }
+            $hireDateRaw = $this->cell($cells, 5);
 
             $parsed = [
                 'employee_identifier' => $sourceId,
@@ -133,7 +134,8 @@ class FujiPayrollSummaryAdapter
                 'employee_name_source' => $sourceName,
                 'sequence' => (int)$sequence,
                 'area' => $this->cell($cells, 4),
-                'hire_date_source' => $this->cell($cells, 5),
+                'hire_date_source' => $this->normalizeWorkbookDate($hireDateRaw),
+                'hire_date_serial_source' => is_numeric($hireDateRaw) ? $hireDateRaw : null,
                 'period_start' => $periodStart,
                 'period_end' => $periodEnd,
                 'pay_date' => $payDate,
@@ -332,6 +334,28 @@ class FujiPayrollSummaryAdapter
     private function duplicateKey(string $sourceId, string $periodStart, string $periodEnd, string $payDate): string
     {
         return implode('__', ['FUJI', $sourceId, $periodStart, $periodEnd, $payDate]);
+    }
+
+    private function normalizeWorkbookDate(string $value): string
+    {
+        $value = trim($value);
+        if (is_numeric($value)) {
+            $serial = (float)$value;
+            if ($serial >= 1 && $serial <= 80000) {
+                return (new DateTimeImmutable('1899-12-30', new DateTimeZone('UTC')))
+                    ->modify('+' . (int)floor($serial) . ' days')
+                    ->format('Y-m-d');
+            }
+        }
+        foreach (['!Y-m-d', '!m/d/Y', '!n/j/Y', '!Y/m/d'] as $format) {
+            $date = DateTimeImmutable::createFromFormat($format, $value);
+            $errors = DateTimeImmutable::getLastErrors();
+            if ($date instanceof DateTimeImmutable
+                && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))) {
+                return $date->format('Y-m-d');
+            }
+        }
+        return '';
     }
 
     private function validateFile(array $file): array

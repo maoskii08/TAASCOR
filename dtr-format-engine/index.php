@@ -1,6 +1,7 @@
 <?php
 require_once('../includes/auth_guard.php');
-auth_require_role([1]);
+auth_require_role([1, 2, 3]);
+$canConfigureTemplates = auth_level() === 1;
 ?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
@@ -25,7 +26,7 @@ auth_require_role([1]);
   <script src="../assets/js/config.js"></script>
 </head>
 
-<body>
+<body data-can-configure-templates="<?php echo $canConfigureTemplates ? '1' : '0'; ?>">
   <div class="layout-wrapper layout-content-navbar">
     <div class="layout-container">
       <?php require('../includes/nav-bar.php') ?>
@@ -138,7 +139,7 @@ auth_require_role([1]);
                 <div class="card">
                   <div class="card-body">
                     <span class="fw-medium d-block mb-1">Payroll Handoff</span>
-                    <h5 class="card-title mb-0">Disabled</h5>
+                    <h5 class="card-title mb-0" id="payrollHandoffStatus">Guarded</h5>
                   </div>
                 </div>
               </div>
@@ -179,6 +180,92 @@ auth_require_role([1]);
               </div>
             </div>
 
+            <div class="card mb-4" id="smart-employee-resolution">
+              <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
+                <div>
+                  <h5 class="mb-1">Smart Employee Alignment</h5>
+                  <small class="text-muted">Batch-wide, one-to-one matching using approved aliases, identifiers, names, hire dates, and payroll-period employment status.</small>
+                </div>
+                <div class="d-flex gap-2">
+                  <select class="form-select form-select-sm" id="smartBatchFilter" style="min-width:260px">
+                    <option value="0">Select a staged batch</option>
+                  </select>
+                  <button type="button" class="btn btn-sm btn-primary" id="analyzeSmartCohortBtn">
+                    <i class="bx bx-scan me-1"></i>Analyze batch
+                  </button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="alert alert-info py-2" id="smartResolutionStatus">
+                  The resolver runs in shadow mode. Nothing is mapped until an HR, Payroll, or Admin owner explicitly approves the safe cohort.
+                </div>
+                <div class="row g-3 mb-3">
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Unique source employees</span><h6 id="smartSourceCount" class="mb-0">-</h6></div>
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Safe shadow matches</span><h6 id="smartSafeCount" class="mb-0">-</h6></div>
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Needs review</span><h6 id="smartReviewCount" class="mb-0">-</h6></div>
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Hard blocked</span><h6 id="smartBlockCount" class="mb-0">-</h6></div>
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Target collisions</span><h6 id="smartCollisionCount" class="mb-0">-</h6></div>
+                </div>
+                <div class="row g-2 align-items-end mb-3">
+                  <div class="col-lg-7">
+                    <label for="smartCohortApprovalReason" class="form-label">Owner approval reason</label>
+                    <input type="text" class="form-control form-control-sm" id="smartCohortApprovalReason"
+                      maxlength="500" placeholder="Example: Reviewed Fuji June 16-30 safe cohort evidence">
+                  </div>
+                  <div class="col-lg-3">
+                    <label for="smartResolutionFilter" class="form-label">View</label>
+                    <select class="form-select form-select-sm" id="smartResolutionFilter">
+                      <option value="all">All decisions</option>
+                      <option value="auto_eligible_shadow">Safe shadow matches</option>
+                      <option value="review">Needs review</option>
+                      <option value="block">Hard blocked</option>
+                    </select>
+                  </div>
+                  <div class="col-lg-2 d-grid">
+                    <button type="button" class="btn btn-sm btn-success" id="approveSmartCohortBtn" disabled>
+                      <i class="bx bx-check-shield me-1"></i>Approve safe cohort
+                    </button>
+                  </div>
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle" id="smartResolutionTable">
+                    <thead>
+                      <tr>
+                        <th>DTR employee</th>
+                        <th>Best HRIS candidate</th>
+                        <th>Evidence</th>
+                        <th>Decision</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td colspan="4" class="text-center text-muted">Select and analyze a staged batch.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <small class="text-muted" id="smartResolutionTableSummary"></small>
+                <div class="border rounded p-3 mt-3" id="payrollImportRunPanel">
+                  <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between">
+                    <div>
+                      <h6 class="mb-1">Guarded payroll import run</h6>
+                      <small class="text-muted">Creates one immutable run-scoped DTR snapshot only after every staged identity and row passes. Legacy payroll remains untouched.</small>
+                    </div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" id="createPayrollImportRunBtn" disabled>
+                      <i class="bx bx-layer-plus me-1"></i>Create canonical snapshot
+                    </button>
+                  </div>
+                  <div class="row g-3 mt-1">
+                    <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">Run</span><strong id="payrollImportRunUid">Not created</strong></div>
+                    <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">State</span><strong id="payrollImportRunState">-</strong></div>
+                    <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">Rules</span><strong id="payrollImportRulesState">-</strong></div>
+                    <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">Release gate</span><strong id="payrollImportReleaseState">-</strong></div>
+                  </div>
+                  <div class="alert alert-warning py-2 mt-3 mb-0" id="payrollImportRunStatus">
+                    Resolve every identity first. A versioned statutory/loan ruleset and exact Fuji reconciliation are still required before approval or payslip release.
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="card mb-4" id="employee-identity-review">
               <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
                 <div>
@@ -205,6 +292,20 @@ auth_require_role([1]);
                   <div class="col-sm-3"><span class="text-muted d-block">Status/client conflict</span><h6 id="identityConflictCount" class="mb-0">0</h6></div>
                 </div>
                 <div id="identityGateAlert" class="alert alert-warning py-2" style="display:none"></div>
+                <div class="row g-2 mb-3">
+                  <div class="col-lg-8">
+                    <input type="search" class="form-control form-control-sm" id="identityExceptionSearch"
+                      placeholder="Search source ID, employee name, batch, or suggested HRIS match">
+                  </div>
+                  <div class="col-lg-4">
+                    <select class="form-select form-select-sm" id="identityExceptionTypeFilter">
+                      <option value="all">All exception types</option>
+                      <option value="MISSING_HRIS_EMPLOYEE">Missing HRIS employee</option>
+                      <option value="EMPLOYEE_MAPPING_REVIEW">Mapping review</option>
+                      <option value="HRIS_STATUS_CONFLICT">Status/client conflict</option>
+                    </select>
+                  </div>
+                </div>
                 <div class="table-responsive">
                   <table class="table table-sm table-bordered align-middle" id="identityExceptionsTable">
                     <thead>
@@ -222,6 +323,7 @@ auth_require_role([1]);
                     </tbody>
                   </table>
                 </div>
+                <small class="text-muted" id="identityExceptionTableSummary"></small>
               </div>
             </div>
 
@@ -903,8 +1005,8 @@ auth_require_role([1]);
             <div class="form-text" id="identityResolutionSuggestion"></div>
           </div>
           <div class="mb-0">
-            <label for="identityResolutionReason" class="form-label">Resolution note</label>
-            <textarea class="form-control" id="identityResolutionReason" rows="3" maxlength="500"></textarea>
+            <label for="identityResolutionReason" class="form-label">Owner decision reason</label>
+            <textarea class="form-control" id="identityResolutionReason" rows="3" maxlength="500" required></textarea>
           </div>
         </div>
         <div class="modal-footer d-flex justify-content-between">

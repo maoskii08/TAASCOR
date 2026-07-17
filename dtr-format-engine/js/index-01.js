@@ -8,10 +8,14 @@ var dtrEngineLookups = {
 var dtrAdapterApprovalProfiles = [];
 var dtrIdentityExceptions = [];
 var dtrIdentityNotificationTimer = null;
+var dtrSmartResolutionRows = [];
+var dtrSmartResolutionSafeCount = 0;
+var dtrCurrentPayrollImportRunId = 0;
 
 $(document).ready(function () {
     resetTemplateForm();
     bindDtrEngineEvents();
+    applyDtrEngineRoleCapabilities();
     loadLookups();
     loadTemplates();
     loadBatches();
@@ -22,7 +26,7 @@ $(document).ready(function () {
     loadIdentityNotifications(true);
     dtrIdentityNotificationTimer = window.setInterval(function () {
         loadIdentityNotifications(false);
-    }, 60000);
+    }, 30000);
 });
 
 function bindDtrEngineEvents() {
@@ -62,6 +66,31 @@ function bindDtrEngineEvents() {
     $('#fujiSummaryUploadForm').on('submit', function (event) {
         event.preventDefault();
         uploadFujiSummary();
+    });
+
+    $('#analyzeSmartCohortBtn').on('click', function () {
+        loadSmartEmployeeResolution();
+    });
+
+    $('#smartBatchFilter').on('change', function () {
+        var batchId = Number($(this).val() || 0);
+        if (batchId > 0) {
+            $('#identityBatchFilter').val(String(batchId));
+            loadSmartEmployeeResolution(batchId);
+            loadIdentityExceptions(batchId);
+        }
+    });
+
+    $('#smartResolutionFilter').on('change', function () {
+        renderSmartResolutionRows();
+    });
+
+    $('#approveSmartCohortBtn').on('click', function () {
+        approveSmartEmployeeCohort();
+    });
+
+    $('#createPayrollImportRunBtn').on('click', function () {
+        createPayrollImportRun();
     });
 
     $('#clearSyntheticBtn').on('click', function () {
@@ -119,6 +148,7 @@ function bindDtrEngineEvents() {
     });
 
     $('#identityBatchFilter').on('change', function () {
+        $('#smartBatchFilter').val(String($(this).val() || 0));
         loadIdentityExceptions();
     });
 
@@ -128,6 +158,14 @@ function bindDtrEngineEvents() {
 
     $('#identityExceptionsTable').on('click', '.resolve-identity-exception', function () {
         openIdentityResolution(Number($(this).data('id')));
+    });
+
+    $('#identityExceptionSearch').on('input', function () {
+        renderIdentityExceptions(dtrIdentityExceptions);
+    });
+
+    $('#identityExceptionTypeFilter').on('change', function () {
+        renderIdentityExceptions(dtrIdentityExceptions);
     });
 
     $('#mapIdentityExceptionBtn').on('click', function () {
@@ -279,16 +317,26 @@ function renderBatches(batches) {
     $('#batchCount').text(batches.length);
 
     var selectedBatch = String($('#identityBatchFilter').val() || '0');
+    var selectedSmartBatch = String($('#smartBatchFilter').val() || selectedBatch || '0');
     var requestedBatchRaw = new URLSearchParams(window.location.search).get('identity_batch');
     var requestedBatch = /^\d+$/.test(String(requestedBatchRaw || '')) ? String(Number(requestedBatchRaw)) : '';
     var batchOptions = '<option value="0">All staged batches</option>' + batches.map(function (batch) {
         return '<option value="' + escapeHtml(batch.id) + '">' + escapeHtml(batch.batch_uid + ' - ' + batch.original_filename) + '</option>';
     }).join('');
     $('#identityBatchFilter').html(batchOptions);
+    $('#smartBatchFilter').html(batchOptions.replace('All staged batches', 'Select a staged batch'));
     if (requestedBatch && $('#identityBatchFilter option[value="' + requestedBatch + '"]').length) {
         $('#identityBatchFilter').val(requestedBatch);
     } else if ($('#identityBatchFilter option[value="' + selectedBatch.replace(/"/g, '') + '"]').length) {
         $('#identityBatchFilter').val(selectedBatch);
+    }
+    var finalIdentityBatch = String($('#identityBatchFilter').val() || '0');
+    if (requestedBatch && $('#smartBatchFilter option[value="' + requestedBatch + '"]').length) {
+        $('#smartBatchFilter').val(requestedBatch);
+    } else if ($('#smartBatchFilter option[value="' + selectedSmartBatch.replace(/"/g, '') + '"]').length) {
+        $('#smartBatchFilter').val(selectedSmartBatch);
+    } else if ($('#smartBatchFilter option[value="' + finalIdentityBatch.replace(/"/g, '') + '"]').length) {
+        $('#smartBatchFilter').val(finalIdentityBatch);
     }
 
     if (!batches.length) {
@@ -493,8 +541,10 @@ function uploadFujiSummary() {
                     + ' (' + String(gate.open_p0_count || 0) + ' unresolved).');
             loadBatches();
             loadIdentityExceptions(response.batch_id);
+            $('#smartBatchFilter, #identityBatchFilter').val(String(response.batch_id));
+            loadSmartEmployeeResolution(response.batch_id);
             loadIdentityNotifications(false);
-            window.location.hash = 'employee-identity-review';
+            window.location.hash = 'smart-employee-resolution';
         },
         error: function () {
             $('#fujiSummaryUploadStatus').removeClass('alert-info alert-success').addClass('alert-danger')
@@ -1093,6 +1143,267 @@ function renderNormalizationRows(rows) {
     }).join(''));
 }
 
+function loadSmartEmployeeResolution(batchOverride) {
+    var batchId = Number(batchOverride || $('#smartBatchFilter').val() || 0);
+    if (batchId <= 0) {
+        dtrSmartResolutionRows = [];
+        dtrSmartResolutionSafeCount = 0;
+        $('#smartSourceCount, #smartSafeCount, #smartReviewCount, #smartBlockCount, #smartCollisionCount').text('-');
+        $('#approveSmartCohortBtn').prop('disabled', true);
+        $('#createPayrollImportRunBtn').prop('disabled', true);
+        renderPayrollImportRun(null, null);
+        $('#smartResolutionTable tbody').html('<tr><td colspan="4" class="text-center text-muted">Select and analyze a staged batch.</td></tr>');
+        $('#smartResolutionTableSummary').text('');
+        return;
+    }
+
+    $('#smartBatchFilter, #identityBatchFilter').val(String(batchId));
+    $('#analyzeSmartCohortBtn').prop('disabled', true)
+        .html('<span class="spinner-border spinner-border-sm me-1"></span>Analyzing');
+    $('#smartResolutionStatus').removeClass('alert-danger alert-success alert-warning').addClass('alert-info')
+        .text('Evaluating the complete batch for one-to-one identity evidence and collisions...');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: {
+            request: 'smart-employee-resolution-preview',
+            batch_id: batchId
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                dtrSmartResolutionRows = [];
+                dtrSmartResolutionSafeCount = 0;
+                $('#approveSmartCohortBtn').prop('disabled', true);
+                $('#smartResolutionStatus').removeClass('alert-info alert-success alert-warning').addClass('alert-danger')
+                    .text(response && response.error ? response.error : 'Unable to analyze the staged employee cohort.');
+                return;
+            }
+            dtrSmartResolutionRows = response.results || [];
+            var preview = response.cohort_preview || {};
+            var counts = preview.classification_counts || {};
+            dtrSmartResolutionSafeCount = Number(counts.auto_eligible_shadow || 0);
+            $('#smartSourceCount').text(Number(preview.unique_source_count || preview.total_sources || 0));
+            $('#smartSafeCount').text(dtrSmartResolutionSafeCount);
+            $('#smartReviewCount').text(Number(counts.review || 0));
+            $('#smartBlockCount').text(Number(counts.block || 0));
+            $('#smartCollisionCount').text(Number(preview.collision_source_count || 0));
+            $('#approveSmartCohortBtn').prop('disabled', dtrSmartResolutionSafeCount <= 0);
+            var unresolved = Number(counts.review || 0) + Number(counts.block || 0);
+            var batch = response.batch || {};
+            var identityReady = batch.validation_status === 'passed' && batch.processing_status === 'identity_ready';
+            $('#createPayrollImportRunBtn').prop('disabled', unresolved > 0 || !identityReady);
+            $('#smartResolutionStatus')
+                .removeClass('alert-info alert-danger alert-success alert-warning')
+                .addClass(unresolved > 0 ? 'alert-warning' : 'alert-success')
+                .text(
+                    dtrSmartResolutionSafeCount + ' collision-free shadow matches are eligible for explicit owner approval. '
+                    + unresolved + ' employees remain in review or hard-blocked. Engine ' + String(response.engine_version || '') + '.'
+                );
+            renderSmartResolutionRows();
+            loadLatestPayrollImportRun(batchId);
+        },
+        error: function () {
+            $('#smartResolutionStatus').removeClass('alert-info alert-success alert-warning').addClass('alert-danger')
+                .text('Unable to analyze the staged employee cohort.');
+        },
+        complete: function () {
+            $('#analyzeSmartCohortBtn').prop('disabled', false)
+                .html('<i class="bx bx-scan me-1"></i>Analyze batch');
+        }
+    });
+}
+
+function renderSmartResolutionRows() {
+    var filter = String($('#smartResolutionFilter').val() || 'all');
+    var filtered = dtrSmartResolutionRows.filter(function (row) {
+        return filter === 'all' || String(row.classification || '') === filter;
+    });
+    var shown = filtered.slice(0, 200);
+    if (!shown.length) {
+        $('#smartResolutionTable tbody').html('<tr><td colspan="4" class="text-center text-muted">No decisions match this view.</td></tr>');
+        $('#smartResolutionTableSummary').text('0 decisions shown.');
+        return;
+    }
+    $('#smartResolutionTable tbody').html(shown.map(function (row) {
+        var candidate = (row.candidates || [])[0] || {};
+        var sourceRows = (row.source_row_numbers || []).slice(0, 3).join(', ');
+        var source = '<strong>' + escapeHtml(row.source_employee_name || 'Name unavailable') + '</strong>'
+            + '<br><small class="text-muted">Source ID ' + escapeHtml(row.source_employee_id || 'missing')
+            + (sourceRows ? ' · row ' + escapeHtml(sourceRows) : '') + '</small>';
+        var target = candidate.employee_id
+            ? '<strong>' + escapeHtml(candidate.employee_name || 'HRIS employee') + '</strong>'
+                + '<br><small class="text-muted">Employee ID ' + escapeHtml(candidate.employee_id)
+                + ' · score ' + escapeHtml(row.top_score || 0) + '</small>'
+            : '<span class="text-muted">No eligible candidate</span>';
+        var evidenceCodes = (row.explanations || []).map(function (evidence) {
+            return evidence.code || evidence;
+        }).slice(0, 4);
+        var contradictionCodes = (row.contradictions || []).slice(0, 3);
+        var evidence = evidenceCodes.concat(contradictionCodes).join(', ') || row.classification_reason || 'No evidence';
+        var badge = row.classification === 'auto_eligible_shadow'
+            ? 'bg-label-success'
+            : (row.classification === 'review' ? 'bg-label-warning' : 'bg-label-danger');
+        var label = row.classification === 'auto_eligible_shadow'
+            ? 'Safe shadow'
+            : (row.classification === 'review' ? 'Owner review' : 'Blocked');
+        return '<tr>'
+            + '<td>' + source + '</td>'
+            + '<td>' + target + '</td>'
+            + '<td><small>' + escapeHtml(evidence) + '</small><br><small class="text-muted">margin ' + escapeHtml(row.margin || 0) + '</small></td>'
+            + '<td><span class="badge ' + badge + '">' + label + '</span><br><small>' + escapeHtml(row.classification_reason || '') + '</small></td>'
+            + '</tr>';
+    }).join(''));
+    $('#smartResolutionTableSummary').text(
+        'Showing ' + shown.length + ' of ' + filtered.length + ' decisions. Results are grouped by unique source employee.'
+    );
+}
+
+function approveSmartEmployeeCohort() {
+    var batchId = Number($('#smartBatchFilter').val() || 0);
+    var reason = String($('#smartCohortApprovalReason').val() || '').trim();
+    if (batchId <= 0) {
+        showDtrEngineError('Select and analyze one staged batch.');
+        return;
+    }
+    if (dtrSmartResolutionSafeCount <= 0) {
+        showDtrEngineError('This batch has no safe shadow matches to approve.');
+        return;
+    }
+    if (!reason) {
+        showDtrEngineError('Enter the owner approval reason for this safe cohort.');
+        $('#smartCohortApprovalReason').trigger('focus');
+        return;
+    }
+
+    $('#approveSmartCohortBtn').prop('disabled', true)
+        .html('<span class="spinner-border spinner-border-sm me-1"></span>Approving');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            request: 'approve-smart-employee-cohort',
+            batch_id: batchId,
+            reason: reason,
+            csrf_token: $('#csrf_token').val()
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showDtrEngineError(response && response.error ? response.error : 'Unable to approve the smart employee cohort.');
+                return;
+            }
+            $('#dtrEngineAlert').hide();
+            $('#smartResolutionStatus').removeClass('alert-info alert-danger alert-warning').addClass('alert-success')
+                .text(String(response.message || 'Safe employee cohort approved.') + ' Remaining exceptions were kept blocked.');
+            $('#smartCohortApprovalReason').val('');
+            loadIdentityExceptions(batchId);
+            loadIdentityNotifications(false);
+            loadBatches();
+            loadSmartEmployeeResolution(batchId);
+        },
+        error: function () {
+            showDtrEngineError('Unable to approve the smart employee cohort.');
+        },
+        complete: function () {
+            $('#approveSmartCohortBtn').html('<i class="bx bx-check-shield me-1"></i>Approve safe cohort');
+        }
+    });
+}
+
+function loadLatestPayrollImportRun(batchId) {
+    batchId = Number(batchId || $('#smartBatchFilter').val() || 0);
+    if (batchId <= 0) {
+        renderPayrollImportRun(null, null);
+        return;
+    }
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: {
+            request: 'latest-payroll-import-run',
+            batch_id: batchId
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                if (response && response.error_code === 'RUN_NOT_FOUND') {
+                    renderPayrollImportRun(null, null);
+                    return;
+                }
+                $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
+                    .text(response && response.error ? response.error : 'Unable to load the guarded payroll run.');
+                return;
+            }
+            renderPayrollImportRun(response.run || {}, response.gate || {});
+        }
+    });
+}
+
+function createPayrollImportRun() {
+    var batchId = Number($('#smartBatchFilter').val() || 0);
+    if (batchId <= 0) {
+        showDtrEngineError('Select and analyze one staged batch.');
+        return;
+    }
+    $('#createPayrollImportRunBtn').prop('disabled', true)
+        .html('<span class="spinner-border spinner-border-sm me-1"></span>Snapshotting');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            request: 'create-payroll-import-run',
+            batch_id: batchId,
+            csrf_token: $('#csrf_token').val()
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
+                    .text(response && response.error ? response.error : 'Unable to create the guarded payroll snapshot.');
+                return;
+            }
+            $('#dtrEngineAlert').hide();
+            loadLatestPayrollImportRun(batchId);
+        },
+        error: function () {
+            $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
+                .text('Unable to create the guarded payroll snapshot.');
+        },
+        complete: function () {
+            $('#createPayrollImportRunBtn').html('<i class="bx bx-layer-plus me-1"></i>Create canonical snapshot');
+            loadSmartEmployeeResolution(batchId);
+        }
+    });
+}
+
+function renderPayrollImportRun(run, gate) {
+    run = run || null;
+    gate = gate || {};
+    if (!run || !run.id) {
+        dtrCurrentPayrollImportRunId = 0;
+        $('#payrollImportRunUid').text('Not created');
+        $('#payrollImportRunState, #payrollImportRulesState, #payrollImportReleaseState').text('-');
+        $('#payrollImportRunStatus').removeClass('alert-danger alert-success').addClass('alert-warning')
+            .text('Resolve every identity first. A versioned statutory/loan ruleset and exact Fuji reconciliation are still required before approval or payslip release.');
+        return;
+    }
+    dtrCurrentPayrollImportRunId = Number(run.id);
+    $('#payrollImportRunUid').text(String(run.run_uid || run.id));
+    $('#payrollImportRunState').text(String(run.status || '-'));
+    $('#payrollImportRulesState').text(String(run.ruleset_status || '-'));
+    var blockerCount = Number(gate.blocker_count == null ? run.release_blocker_count || 0 : gate.blocker_count);
+    $('#payrollImportReleaseState').text(gate.eligible ? 'Eligible' : 'Blocked · ' + blockerCount);
+    $('#payrollHandoffStatus').text(run.status === 'released' ? 'Released' : 'Guarded');
+    var blockers = (gate.blockers || []).join(', ');
+    $('#payrollImportRunStatus')
+        .removeClass('alert-danger alert-warning alert-success')
+        .addClass(gate.eligible ? 'alert-success' : 'alert-warning')
+        .text(gate.eligible
+            ? 'Every configured release control has passed. Final posting remains maker-checker controlled.'
+            : 'Immutable run snapshot created. Release remains blocked by: ' + (blockers || 'pending controls') + '.');
+}
+
 function loadIdentityExceptions(batchOverride) {
     var batchId = Number(batchOverride || $('#identityBatchFilter').val() || 0);
     $.ajax({
@@ -1120,12 +1431,32 @@ function loadIdentityExceptions(batchOverride) {
 }
 
 function renderIdentityExceptions(rows) {
-    if (!rows.length) {
+    var query = String($('#identityExceptionSearch').val() || '').trim().toLowerCase();
+    var type = String($('#identityExceptionTypeFilter').val() || 'all');
+    var filtered = rows.filter(function (row) {
+        if (type !== 'all' && String(row.exception_code || '') !== type) {
+            return false;
+        }
+        if (!query) {
+            return true;
+        }
+        return [
+            row.source_employee_id,
+            row.source_employee_name,
+            row.batch_uid,
+            row.suggested_employee_id,
+            row.suggested_employee_name,
+            row.exception_code
+        ].join(' ').toLowerCase().indexOf(query) !== -1;
+    });
+    var shown = filtered.slice(0, 200);
+    if (!shown.length) {
         $('#identityExceptionsTable tbody').html('<tr><td colspan="6" class="text-center text-muted">No unresolved employee identity exceptions.</td></tr>');
+        $('#identityExceptionTableSummary').text('0 exceptions shown.');
         return;
     }
 
-    $('#identityExceptionsTable tbody').html(rows.map(function (row) {
+    $('#identityExceptionsTable tbody').html(shown.map(function (row) {
         var source = escapeHtml(row.source_employee_name || 'Name unavailable')
             + (row.source_employee_id ? '<br><small class="text-muted">Source ID ' + escapeHtml(row.source_employee_id) + '</small>' : '');
         var suggestion = row.suggested_employee_id
@@ -1144,6 +1475,7 @@ function renderIdentityExceptions(rows) {
             + '</td>'
             + '</tr>';
     }).join(''));
+    $('#identityExceptionTableSummary').text('Showing ' + shown.length + ' of ' + filtered.length + ' matching unresolved exceptions.');
 }
 
 function renderIdentityGate(summary) {
@@ -1244,8 +1576,8 @@ function submitIdentityResolution(action) {
         showDtrEngineError('Enter the approved HRIS employee ID.');
         return;
     }
-    if (action === 'exclude' && !reason) {
-        showDtrEngineError('Enter an owner-approved exclusion reason.');
+    if (!reason) {
+        showDtrEngineError('Enter the owner-approved reason for this identity decision.');
         return;
     }
 
@@ -1365,13 +1697,14 @@ function showDesktopIdentityNotification(rows, forceRefresh) {
     if (!newest) {
         return;
     }
-    var storageKey = 'taascorIdentityLastNotificationId';
-    var lastId = Number(window.localStorage.getItem(storageKey) || 0);
-    if (Number(newest.id) <= lastId) {
+    var storageKey = 'taascorIdentityLastNotificationRevision';
+    var revision = [newest.id, newest.updated_at || newest.created_at || '', newest.open_count].join('|');
+    var lastRevision = window.localStorage.getItem(storageKey) || '';
+    if (revision === lastRevision) {
         return;
     }
-    window.localStorage.setItem(storageKey, String(newest.id));
-    if (forceRefresh && lastId === 0) {
+    window.localStorage.setItem(storageKey, revision);
+    if (forceRefresh && lastRevision === '') {
         return;
     }
     var desktop = new Notification(newest.title, {
@@ -1435,6 +1768,16 @@ function formatExpectedHeaders(value) {
         }
     } catch (ignored) {}
     return value || '';
+}
+
+function applyDtrEngineRoleCapabilities() {
+    var canConfigure = String($('body').data('can-configure-templates')) === '1';
+    if (canConfigure) {
+        return;
+    }
+    $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input')
+        .prop('disabled', true);
+    $('#saveTemplateBtn').text('Admin configuration only');
 }
 
 function showDtrEngineError(message) {
