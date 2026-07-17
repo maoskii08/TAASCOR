@@ -75,6 +75,7 @@ php payslip/tests/ReleaseGateRulesTest.php
 php payslip/tests/PayslipDynamicSealTest.php
 php payslip/tests/RequestSqlSafetyTest.php
 php tests/CsrfAjaxCoverageTest.php
+php tests/NavBarMountPathTest.php
 python tools/fuji-reconciliation/test_reconciliation.py
 python tools/fuji-reconciliation/test_payroll_release_gate.py
 php tests/MigrationRerunTest.php

@@ -2,11 +2,22 @@
 session_start();
 require_once(__DIR__ . '/csrf.php');
 
-$pathParts = explode(DIRECTORY_SEPARATOR, __DIR__);
+// Derive the application mount from the request URL, not the server's
+// filesystem depth. The old fixed path index resolves to "includes" on
+// Windows and breaks local login/session redirects.
+$scriptName = str_replace('\\', '/', (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php'));
+$appBasePath = str_replace('\\', '/', dirname(dirname($scriptName)));
+$appBasePath = rtrim($appBasePath, '/.');
+$appBaseUrl = $appBasePath === '' ? '' : '/' . ltrim($appBasePath, '/');
+
+// Keep the legacy variable available for page-specific links and scripts.
+// A dot produces root-relative /./... URLs that browsers safely normalize.
+$pathParts = [];
+$pathParts[6] = $appBaseUrl === '' ? '.' : trim($appBaseUrl, '/');
 
 // ── Login check ───────────────────────────────────────────────────────────
 if (!isset($_SESSION['taascor_access_level'])) {
-    header("Location: /$pathParts[6]/login/");
+    header("Location: {$appBaseUrl}/login/");
     exit();
 }
 
@@ -14,12 +25,12 @@ if (!isset($_SESSION['taascor_access_level'])) {
 $now = time();
 if (isset($_SESSION['last_activity']) && ($now - $_SESSION['last_activity']) > 1800) {
     session_unset(); session_destroy();
-    header("Location: /$pathParts[6]/login/?reason=timeout");
+    header("Location: {$appBaseUrl}/login/?reason=timeout");
     exit();
 }
 if (isset($_SESSION['session_start']) && ($now - $_SESSION['session_start']) > 28800) {
     session_unset(); session_destroy();
-    header("Location: /$pathParts[6]/login/?reason=timeout");
+    header("Location: {$appBaseUrl}/login/?reason=timeout");
     exit();
 }
 $_SESSION['last_activity'] = $now;
