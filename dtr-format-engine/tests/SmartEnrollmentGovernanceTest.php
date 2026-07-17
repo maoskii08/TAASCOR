@@ -22,4 +22,11 @@ enrollment_check(
     'one-way enrollment requires a currently effective approved payroll ruleset'
 );
 
+$workspaceScript = (string)file_get_contents(__DIR__ . '/../js/index-01.js');
+enrollment_check(
+    str_contains($workspaceScript, 'dtrRequestedBatchAutoLoaded')
+        && str_contains($workspaceScript, 'loadSmartEmployeeResolution(Number(requestedBatch))'),
+    'a guarded identity-batch deep link automatically opens its shadow analysis once'
+);
+
 echo "RESULT: Smart payroll enrollment governance passed.\n";

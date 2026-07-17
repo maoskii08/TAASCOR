@@ -11,6 +11,7 @@ var dtrIdentityNotificationTimer = null;
 var dtrSmartResolutionRows = [];
 var dtrSmartResolutionSafeCount = 0;
 var dtrCurrentPayrollImportRunId = 0;
+var dtrRequestedBatchAutoLoaded = false;
 
 $(document).ready(function () {
     resetTemplateForm();
@@ -337,6 +338,13 @@ function renderBatches(batches) {
         $('#smartBatchFilter').val(selectedSmartBatch);
     } else if ($('#smartBatchFilter option[value="' + finalIdentityBatch.replace(/"/g, '') + '"]').length) {
         $('#smartBatchFilter').val(finalIdentityBatch);
+    }
+
+    if (requestedBatch && !dtrRequestedBatchAutoLoaded
+        && $('#smartBatchFilter option[value="' + requestedBatch + '"]').length) {
+        dtrRequestedBatchAutoLoaded = true;
+        loadSmartEmployeeResolution(Number(requestedBatch));
+        loadIdentityExceptions(Number(requestedBatch));
     }
 
     if (!batches.length) {
