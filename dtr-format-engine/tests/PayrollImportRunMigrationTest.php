@@ -59,6 +59,8 @@ try {
         '20260621_03_payroll_basis_preview.sql',
         '20260716_employee_identity_notifications.sql',
         '20260717_01_payroll_import_run_foundation.sql',
+        '20260726_02_payroll_population_exceptions.sql',
+        '20260727_01_payroll_adjustment_audit.sql',
     ];
     foreach ([1, 2] as $pass) {
         foreach ($migrations as $migration) {
@@ -82,6 +84,8 @@ try {
         'payroll_import_rule_sets',
         'payroll_import_legacy_scope_bindings',
         'payroll_import_release_locks',
+        'payroll_population_exceptions',
+        'payroll_adjustment_audit_events',
     ];
     $tableQuery = $db->prepare("\n        SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES\n        WHERE TABLE_SCHEMA = :schema_name AND TABLE_NAME = :table_name\n    ");
     foreach ($expectedTables as $table) {

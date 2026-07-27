@@ -64,6 +64,7 @@ $safeFacts = [
     'reconciliation_status' => 'passed',
     'unresolved_identity_count' => 0,
     'identity_collision_count' => 0,
+    'open_population_exception_count' => 0,
     'validation_error_count' => 0,
     'employee_count' => 18,
     'verified_artifact_count' => 18,
@@ -99,6 +100,14 @@ $gate = PayrollImportRunManager::evaluateReleaseEligibility($identityCollision);
 payroll_run_check(
     $gate['eligible'] === false && in_array('identity_collisions', $gate['blockers'], true),
     'identity collision blocks release'
+);
+
+$populationGap = $safeFacts;
+$populationGap['open_population_exception_count'] = 1;
+$gate = PayrollImportRunManager::evaluateReleaseEligibility($populationGap);
+payroll_run_check(
+    $gate['eligible'] === false && in_array('open_population_exceptions', $gate['blockers'], true),
+    'an unresolved payslip-to-DTR population exception blocks release'
 );
 
 $failedCheck = $safeFacts;

@@ -147,36 +147,145 @@ $canConfigureTemplates = auth_level() === 1;
 
             <div id="dtrEngineAlert" class="alert alert-danger" style="display:none"></div>
 
-            <div class="card mb-4" id="fuji-summary-upload">
+            <div class="card mb-4" id="real-dtr-upload">
               <div class="card-header">
-                <h5 class="mb-1">Fujifilm Payroll Summary Staging</h5>
-                <small class="text-muted">Stages the complete Fuji workbook for identity review. This does not write canonical DTR or payroll tables.</small>
+                <h5 class="mb-1">Real DTR Upload</h5>
+                <small class="text-muted">Upload any client DTR through an approved, versioned adapter. Files remain in governed staging until identity, validation, reconciliation, and payroll controls pass.</small>
               </div>
               <div class="card-body">
-                <form id="fujiSummaryUploadForm" enctype="multipart/form-data">
+                <form id="realDtrUploadForm" enctype="multipart/form-data">
                   <div class="row g-3 align-items-end">
+                    <div class="col-lg-3">
+                      <label class="form-label" for="realDtrClientId">Client</label>
+                      <select class="form-select" id="realDtrClientId" name="client_id" required>
+                        <option value="">Select client</option>
+                      </select>
+                    </div>
+                    <div class="col-lg-4">
+                      <label class="form-label" for="realDtrAdapterProfileId">Approved format</label>
+                      <select class="form-select" id="realDtrAdapterProfileId" name="adapter_profile_id" disabled>
+                        <option value="">Select client first</option>
+                      </select>
+                      <small class="text-muted">Auto-detect is recommended; select a version only when formats are ambiguous.</small>
+                    </div>
                     <div class="col-lg-5">
-                      <label class="form-label" for="fujiSummaryFile">Fuji .xlsx workbook</label>
-                      <input class="form-control" type="file" id="fujiSummaryFile" name="fuji_file" accept=".xlsx" required>
+                      <label class="form-label" for="realDtrFile">DTR file</label>
+                      <input class="form-control" type="file" id="realDtrFile" name="dtr_file" accept=".csv,.xlsx" required>
                     </div>
-                    <div class="col-sm-4 col-lg-2">
-                      <label class="form-label" for="fujiPeriodStart">Period start</label>
-                      <input class="form-control" type="date" id="fujiPeriodStart" name="period_start" value="2026-06-16" required>
+                    <div class="col-sm-4 col-lg-3">
+                      <label class="form-label" for="realDtrPeriodStart">Period start</label>
+                      <input class="form-control" type="date" id="realDtrPeriodStart" name="period_start" required>
                     </div>
-                    <div class="col-sm-4 col-lg-2">
-                      <label class="form-label" for="fujiPeriodEnd">Period end</label>
-                      <input class="form-control" type="date" id="fujiPeriodEnd" name="period_end" value="2026-06-30" required>
+                    <div class="col-sm-4 col-lg-3">
+                      <label class="form-label" for="realDtrPeriodEnd">Period end</label>
+                      <input class="form-control" type="date" id="realDtrPeriodEnd" name="period_end" required>
                     </div>
-                    <div class="col-sm-4 col-lg-2">
-                      <label class="form-label" for="fujiPayDate">Pay date</label>
-                      <input class="form-control" type="date" id="fujiPayDate" name="pay_date" value="2026-07-13" required>
+                    <div class="col-sm-4 col-lg-3">
+                      <label class="form-label" for="realDtrPayDate">Pay date</label>
+                      <input class="form-control" type="date" id="realDtrPayDate" name="pay_date" required>
                     </div>
-                    <div class="col-lg-1 d-grid">
-                      <button class="btn btn-primary" type="submit" id="stageFujiSummaryBtn">Stage</button>
+                    <div class="col-lg-3 d-grid">
+                      <button class="btn btn-primary" type="submit" id="stageRealDtrBtn">
+                        <i class="bx bx-upload me-1"></i>Stage for review
+                      </button>
                     </div>
                   </div>
                 </form>
-                <div class="alert alert-info mt-3 mb-0" id="fujiSummaryUploadStatus" style="display:none"></div>
+                <div class="alert alert-info mt-3 mb-0" id="realDtrUploadStatus" style="display:none"></div>
+              </div>
+            </div>
+
+            <div class="card mb-4" id="adapter-registry">
+              <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
+                <div>
+                  <h5 class="mb-1">Governed DTR Format Registry</h5>
+                  <small class="text-muted">Create immutable adapter versions from client templates. Maker-checker approval is required before a format becomes available for real uploads.</small>
+                </div>
+                <span class="badge bg-label-primary">Admin controlled</span>
+              </div>
+              <div class="card-body">
+                <form id="adapterProfileForm" class="mb-4">
+                  <div class="row g-3 align-items-end">
+                    <div class="col-lg-3">
+                      <label class="form-label" for="adapterTemplateId">Client template</label>
+                      <select class="form-select" id="adapterTemplateId" name="template_id" required>
+                        <option value="">Select template</option>
+                      </select>
+                    </div>
+                    <div class="col-lg-2">
+                      <label class="form-label" for="adapterKey">Adapter key</label>
+                      <input class="form-control" id="adapterKey" name="adapter_key" maxlength="120" placeholder="CLIENT_DTR" required>
+                    </div>
+                    <div class="col-lg-2">
+                      <label class="form-label" for="adapterVersion">Version</label>
+                      <input class="form-control" id="adapterVersion" name="adapter_version" maxlength="80" placeholder="v1.0.0" required>
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="adapterDisplayName">Display name</label>
+                      <input class="form-control" id="adapterDisplayName" name="display_name" maxlength="180" placeholder="Client Biometric Export" required>
+                    </div>
+                    <div class="col-lg-2">
+                      <label class="form-label" for="adapterEffectiveFrom">Effective from</label>
+                      <input class="form-control" type="date" id="adapterEffectiveFrom" name="effective_from" required>
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="adapterParserKey">Parser</label>
+                      <select class="form-select" id="adapterParserKey" name="parser_key">
+                        <option value="template_tabular_v1">Standard CSV/XLSX table</option>
+                        <option value="fuji_payroll_summary_v1">Fuji payroll summary</option>
+                      </select>
+                    </div>
+                    <div class="col-lg-3">
+                      <label class="form-label" for="adapterIdentityPolicy">Employee ID policy</label>
+                      <select class="form-select" id="adapterIdentityPolicy" name="identity_policy">
+                        <option value="approved_mapping_required">Approved mapping required</option>
+                        <option value="trusted_hris_identifier">Trusted HRIS identifier</option>
+                      </select>
+                    </div>
+                    <div class="col-lg-4">
+                      <small class="text-muted d-block">Use “trusted” only when the source contains governed HRIS IDs. Vendor IDs must require approved mappings.</small>
+                    </div>
+                    <div class="col-lg-2 d-grid">
+                      <button class="btn btn-outline-primary" type="submit" id="createAdapterProfileBtn">Create draft</button>
+                    </div>
+                  </div>
+                </form>
+
+                <div class="row g-3 align-items-end mb-4">
+                  <div class="col-lg-4">
+                    <label class="form-label" for="adapterApprovalProfileId">Draft awaiting checker</label>
+                    <select class="form-select" id="adapterApprovalProfileId">
+                      <option value="">Select draft</option>
+                    </select>
+                  </div>
+                  <div class="col-lg-6">
+                    <label class="form-label" for="adapterApprovalReason">Approval reason and test evidence</label>
+                    <input class="form-control" id="adapterApprovalReason" maxlength="1000" placeholder="Reviewed sample, mapping, identity policy, totals and row reconciliation">
+                  </div>
+                  <div class="col-lg-2 d-grid">
+                    <button class="btn btn-success" type="button" id="approveAdapterProfileBtn">Approve</button>
+                  </div>
+                </div>
+
+                <div class="alert alert-info py-2" id="adapterRegistryStatus" style="display:none"></div>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle" id="adapterRegistryTable">
+                    <thead>
+                      <tr>
+                        <th>Client</th>
+                        <th>Format</th>
+                        <th>Version</th>
+                        <th>Parser</th>
+                        <th>Employee ID policy</th>
+                        <th>Effective</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td colspan="7" class="text-center text-muted">Loading adapter registry...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
@@ -201,6 +310,7 @@ $canConfigureTemplates = auth_level() === 1;
                 </div>
                 <div class="row g-3 mb-3">
                   <div class="col-sm-6 col-xl"><span class="text-muted d-block">Unique source employees</span><h6 id="smartSourceCount" class="mb-0">-</h6></div>
+                  <div class="col-sm-6 col-xl"><span class="text-muted d-block">Approved mappings</span><h6 id="smartApprovedCount" class="mb-0">-</h6></div>
                   <div class="col-sm-6 col-xl"><span class="text-muted d-block">Safe shadow matches</span><h6 id="smartSafeCount" class="mb-0">-</h6></div>
                   <div class="col-sm-6 col-xl"><span class="text-muted d-block">Needs review</span><h6 id="smartReviewCount" class="mb-0">-</h6></div>
                   <div class="col-sm-6 col-xl"><span class="text-muted d-block">Hard blocked</span><h6 id="smartBlockCount" class="mb-0">-</h6></div>
@@ -210,12 +320,13 @@ $canConfigureTemplates = auth_level() === 1;
                   <div class="col-lg-7">
                     <label for="smartCohortApprovalReason" class="form-label">Owner approval reason</label>
                     <input type="text" class="form-control form-control-sm" id="smartCohortApprovalReason"
-                      maxlength="500" placeholder="Example: Reviewed Fuji June 16-30 safe cohort evidence">
+                      maxlength="500" placeholder="Example: Reviewed client, payroll period, identity evidence, and collisions">
                   </div>
                   <div class="col-lg-3">
                     <label for="smartResolutionFilter" class="form-label">View</label>
                     <select class="form-select form-select-sm" id="smartResolutionFilter">
                       <option value="all">All decisions</option>
+                      <option value="approved">Approved mappings</option>
                       <option value="auto_eligible_shadow">Safe shadow matches</option>
                       <option value="review">Needs review</option>
                       <option value="block">Hard blocked</option>
@@ -260,7 +371,7 @@ $canConfigureTemplates = auth_level() === 1;
                     <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">Release gate</span><strong id="payrollImportReleaseState">-</strong></div>
                   </div>
                   <div class="alert alert-warning py-2 mt-3 mb-0" id="payrollImportRunStatus">
-                    Resolve every identity first. A versioned statutory/loan ruleset and exact Fuji reconciliation are still required before approval or payslip release.
+                    Resolve every identity first. A versioned client ruleset and exact approved-reference reconciliation are still required before approval or payslip release.
                   </div>
                 </div>
               </div>
@@ -274,10 +385,13 @@ $canConfigureTemplates = auth_level() === 1;
                 </div>
                 <div class="d-flex gap-2">
                   <select class="form-select form-select-sm" id="identityBatchFilter" style="min-width:220px">
-                    <option value="0">All staged batches</option>
+                    <option value="0">Select a staged batch</option>
                   </select>
                   <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshIdentityExceptionsBtn">
                     <i class="bx bx-refresh me-1"></i>Refresh
+                  </button>
+                  <button type="button" class="btn btn-sm btn-outline-primary" id="exportIdentityDecisionPacketBtn" disabled>
+                    <i class="bx bx-download me-1"></i>Export HR decision packet
                   </button>
                   <button type="button" class="btn btn-sm btn-primary" id="syncIdentityBatchBtn">
                     <i class="bx bx-shield-quarter me-1"></i>Validate selected batch
@@ -324,6 +438,59 @@ $canConfigureTemplates = auth_level() === 1;
                   </table>
                 </div>
                 <small class="text-muted" id="identityExceptionTableSummary"></small>
+              </div>
+            </div>
+
+            <div class="card mb-4" id="payroll-population-review">
+              <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
+                <div>
+                  <h5 class="mb-1">DTR and Payslip Population Review</h5>
+                  <small class="text-muted">Employees found in the expected payslip set but absent from this DTR stay blocked until an owner records the supported disposition.</small>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-secondary" id="refreshPopulationExceptionsBtn">
+                    <i class="bx bx-refresh me-1"></i>Refresh
+                  </button>
+                  <button type="button" class="btn btn-sm btn-outline-warning" id="notifyPopulationOwnersBtn">
+                    <i class="bx bx-bell me-1"></i>Notify HR &amp; Payroll
+                  </button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="row g-3 mb-3">
+                  <div class="col-sm-4">
+                    <span class="text-muted d-block">Population gate</span>
+                    <h6 id="populationGateStatus" class="mb-0">Select a staged batch</h6>
+                  </div>
+                  <div class="col-sm-4">
+                    <span class="text-muted d-block">Open P0 exceptions</span>
+                    <h6 id="populationOpenCount" class="mb-0">0</h6>
+                  </div>
+                  <div class="col-sm-4">
+                    <span class="text-muted d-block">Resolved with evidence</span>
+                    <h6 id="populationResolvedCount" class="mb-0">0</h6>
+                  </div>
+                </div>
+                <div class="alert alert-info py-2" id="populationGateAlert">
+                  Select a staged client batch above to review payslip-only employees. These records do not create or alter employee, DTR, payroll, loan, deduction, or payslip data.
+                </div>
+                <div class="table-responsive">
+                  <table class="table table-sm table-bordered align-middle" id="populationExceptionsTable">
+                    <thead>
+                      <tr>
+                        <th>Payslip employee</th>
+                        <th>Matched HRIS employee</th>
+                        <th>Reference evidence</th>
+                        <th>Status / disposition</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td colspan="5" class="text-center text-muted">No population exceptions loaded.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <small class="text-muted" id="populationExceptionTableSummary"></small>
               </div>
             </div>
 
@@ -397,9 +564,10 @@ $canConfigureTemplates = auth_level() === 1;
                           <thead>
                             <tr>
                               <th>Source Header</th>
-                              <th>Canonical Field</th>
-                              <th>Type</th>
-                              <th>Required</th>
+                               <th>Canonical Field</th>
+                               <th>Type</th>
+                               <th>Transform</th>
+                               <th>Required</th>
                               <th></th>
                             </tr>
                           </thead>
@@ -1020,8 +1188,43 @@ $canConfigureTemplates = auth_level() === 1;
     </div>
   </div>
 
+  <div class="modal fade" id="populationResolutionModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Resolve Payslip-Only Employee</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" id="populationExceptionId" value="0" />
+          <div class="alert alert-light border" id="populationResolutionSource"></div>
+          <div class="mb-3">
+            <label for="populationResolutionDisposition" class="form-label">Owner disposition</label>
+            <select class="form-select" id="populationResolutionDisposition" required>
+              <option value="">Select the supported outcome</option>
+              <option value="dtr_added_to_superseding_batch">DTR added to a superseding batch</option>
+              <option value="approved_off_cycle">Approved off-cycle payroll</option>
+              <option value="approved_adjustment">Approved adjustment payroll</option>
+              <option value="reference_exclusion">Exclude from this reference comparison</option>
+            </select>
+          </div>
+          <div class="mb-0">
+            <label for="populationResolutionReason" class="form-label">Evidence-backed owner reason</label>
+            <textarea class="form-control" id="populationResolutionReason" rows="4" minlength="20" maxlength="1000"
+              placeholder="Reference the approved DTR correction, off-cycle instruction, adjustment approval, or exclusion evidence." required></textarea>
+            <div class="form-text">This decision is audited. It does not manufacture a missing DTR row.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="resolvePopulationExceptionBtn">Record disposition</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js"></script>
+  <script src="js/index-01.js?v=20260727i"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 

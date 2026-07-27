@@ -103,7 +103,7 @@ class EmployeeIdentityNotificationManager
                 $params[':status'] = $status;
             }
             $filter = $where ? 'WHERE ' . implode(' AND ', $where) : '';
-            $stmt = $this->db->prepare("\n                SELECT\n                    e.id, e.batch_id, e.staging_row_id, e.exception_code, e.severity,\n                    e.source_employee_id, e.source_employee_name,\n                    e.suggested_employee_id, e.suggested_employee_name, e.candidate_payload,\n                    e.status, e.resolution_type, e.resolved_employee_id,\n                    e.resolution_reason, e.created_at, e.resolved_by, e.resolved_at,\n                    r.source_row_number, b.batch_uid, b.original_filename, b.uploaded_at,\n                    b.validation_status AS batch_validation_status,\n                    b.processing_status AS batch_processing_status,\n                    t.template_name, t.client_id, c.client_name\n                FROM dtr_employee_exceptions e\n                INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n                INNER JOIN dtr_upload_staging_rows r ON r.id = e.staging_row_id\n                LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n                LEFT JOIN taascor_client c ON c.client_id = t.client_id\n                $filter\n                ORDER BY\n                    FIELD(e.severity, 'P0', 'P1', 'P2'),\n                    e.batch_id DESC, r.source_row_number ASC\n                LIMIT 2000\n            ");
+            $stmt = $this->db->prepare("\n                SELECT\n                    e.id, e.batch_id, e.staging_row_id, e.exception_code, e.severity,\n                    e.source_employee_id, e.source_employee_name,\n                    e.suggested_employee_id, e.suggested_employee_name, e.candidate_payload,\n                    e.status, e.resolution_type, e.resolved_employee_id,\n                    e.resolution_reason, e.created_at, e.resolved_by, e.resolved_at,\n                    r.source_row_number, b.batch_uid, b.original_filename, b.uploaded_at,\n                    b.validation_status AS batch_validation_status,\n                    b.processing_status AS batch_processing_status,\n                    t.template_name, COALESCE(b.client_id, t.client_id) AS client_id, c.client_name\n                FROM dtr_employee_exceptions e\n                INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n                INNER JOIN dtr_upload_staging_rows r ON r.id = e.staging_row_id\n                LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n                LEFT JOIN taascor_client c ON c.client_id = COALESCE(b.client_id, t.client_id)\n                $filter\n                ORDER BY\n                    FIELD(e.severity, 'P0', 'P1', 'P2'),\n                    e.batch_id DESC, r.source_row_number ASC\n                LIMIT 2000\n            ");
             $stmt->execute($params);
             $rows = [];
             foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -164,6 +164,103 @@ class EmployeeIdentityNotificationManager
         } catch (Throwable $error) {
             error_log('Notification read update failed: ' . $error->getMessage());
             return ['success' => 0, 'error' => 'Unable to update the notification.'];
+        }
+    }
+
+    public function syncPopulationNotification(int $batchId, string $actor): array
+    {
+        try {
+            $batch = $this->loadBatch($batchId, false);
+            if (!$batch) {
+                return ['success' => 0, 'error' => 'Staged DTR batch was not found.'];
+            }
+
+            $exceptions = $this->db->prepare("\n                SELECT reference_employee_name
+                FROM payroll_population_exceptions
+                WHERE batch_id = :batch_id AND status = 'open' AND severity = 'P0'
+                ORDER BY reference_employee_name, id
+            ");
+            $exceptions->execute([':batch_id' => $batchId]);
+            $names = array_values(array_filter(array_map(
+                static fn($value): string => trim((string)$value),
+                $exceptions->fetchAll(PDO::FETCH_COLUMN)
+            )));
+            $openP0 = count($names);
+            $clientName = trim((string)($batch['client_name'] ?? '')) ?: 'DTR';
+            $status = $openP0 > 0 ? 'open' : 'resolved';
+            $title = $openP0 > 0
+                ? $clientName . ' payslip population requires DTR action'
+                : $clientName . ' DTR and payslip population resolved';
+            $message = $openP0 > 0
+                ? sprintf(
+                    'Batch %s is blocked by %d payslip employee(s) missing from the staged DTR: %s.',
+                    (string)$batch['batch_uid'],
+                    $openP0,
+                    implode('; ', array_slice($names, 0, 8))
+                )
+                : sprintf(
+                    'Batch %s has no unresolved DTR-to-payslip population exceptions.',
+                    (string)$batch['batch_uid']
+                );
+            $payload = json_encode([
+                'batch_uid' => (string)$batch['batch_uid'],
+                'exception_code' => 'PAYSLIP_WITHOUT_DTR',
+                'open_p0' => $openP0,
+                'employee_names' => $names,
+                'required_owner_evidence' => [
+                    'superseding_dtr',
+                    'off_cycle_approval',
+                    'adjustment_approval',
+                    'reference_exclusion_approval',
+                ],
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            $fingerprint = 'DTR_POPULATION_BATCH_' . $batchId;
+            $stmt = $this->db->prepare("\n                INSERT INTO notification_events (
+                    fingerprint, event_type, severity, title, message,
+                    batch_id, client_id, open_count, target_url, payload, status, resolved_at
+                ) VALUES (
+                    :fingerprint, 'DTR_PAYSLIP_POPULATION', 'P0', :title, :message,
+                    :batch_id, :client_id, :open_count, :target_url, :payload, :status, :resolved_at
+                )
+                ON DUPLICATE KEY UPDATE
+                    title = VALUES(title), message = VALUES(message),
+                    client_id = VALUES(client_id), open_count = VALUES(open_count),
+                    target_url = VALUES(target_url), payload = VALUES(payload),
+                    status = VALUES(status), resolved_at = VALUES(resolved_at), updated_at = NOW()
+            ");
+            $stmt->execute([
+                ':fingerprint' => $fingerprint,
+                ':title' => $title,
+                ':message' => $message,
+                ':batch_id' => $batchId,
+                ':client_id' => (int)$batch['client_id'] > 0 ? (int)$batch['client_id'] : null,
+                ':open_count' => $openP0,
+                ':target_url' => '../dtr-format-engine/?identity_batch=' . $batchId . '#payroll-population-review',
+                ':payload' => $payload,
+                ':status' => $status,
+                ':resolved_at' => $openP0 > 0 ? null : date('Y-m-d H:i:s'),
+            ]);
+            $notificationId = (int)$this->db->lastInsertId();
+            if ($notificationId === 0) {
+                $find = $this->db->prepare(
+                    'SELECT id FROM notification_events WHERE fingerprint = :fingerprint'
+                );
+                $find->execute([':fingerprint' => $fingerprint]);
+                $notificationId = (int)$find->fetchColumn();
+            }
+            $this->syncRecipients(
+                $notificationId,
+                trim((string)($batch['uploaded_by'] ?? '')) ?: trim($actor)
+            );
+            return [
+                'success' => 1,
+                'notification_id' => $notificationId,
+                'status' => $status,
+                'open_p0_count' => $openP0,
+            ];
+        } catch (Throwable $error) {
+            error_log('Payroll population notification sync failed: ' . $error->getMessage());
+            return ['success' => 0, 'error' => 'Unable to synchronize the payroll population notification.'];
         }
     }
 
@@ -322,7 +419,7 @@ class EmployeeIdentityNotificationManager
         }
 
         $direct = ['scoped' => [], 'other_client' => []];
-        if ((string)($batch['source_type'] ?? '') !== 'fuji_payroll_summary') {
+        if ((string)($batch['identity_policy'] ?? 'approved_mapping_required') === 'trusted_hris_identifier') {
             $direct = $this->directEmployees($sourceId, $clientId);
             foreach ($direct['scoped'] as $employee) {
                 if (!$this->employeeActiveForPeriod($employee, $periodStart, $periodEnd)) {
@@ -509,7 +606,18 @@ class EmployeeIdentityNotificationManager
         if ($notificationId <= 0) {
             return;
         }
-        $users = $this->db->query("\n            SELECT employee_user_name\n            FROM taascor_user_access\n            WHERE access_level IN (1, 2, 3) AND is_active = b'1'\n        ")->fetchAll(PDO::FETCH_COLUMN);
+        $event = $this->db->prepare('SELECT client_id FROM notification_events WHERE id = :notification_id');
+        $event->execute([':notification_id' => $notificationId]);
+        $clientId = (int)$event->fetchColumn();
+
+        if ($clientId > 0) {
+            $recipientQuery = $this->db->prepare("\n                SELECT employee_user_name\n                FROM taascor_user_access\n                WHERE is_active = b'1' AND access_level IN (1, 2, 3)\n            ");
+            $recipientQuery->execute();
+        } else {
+            $recipientQuery = $this->db->prepare("\n                SELECT employee_user_name\n                FROM taascor_user_access\n                WHERE is_active = b'1' AND access_level IN (1, 2, 3)\n            ");
+            $recipientQuery->execute();
+        }
+        $users = $recipientQuery->fetchAll(PDO::FETCH_COLUMN);
         if (trim($uploader) !== '') {
             $users[] = trim($uploader);
         }
@@ -518,6 +626,7 @@ class EmployeeIdentityNotificationManager
         foreach ($users as $user) {
             $stmt->execute([':notification_id' => $notificationId, ':user_name' => $user]);
             $this->recordInAppDelivery($notificationId, $user);
+            $this->recordEmailDelivery($notificationId, $user);
         }
     }
 
@@ -544,6 +653,43 @@ class EmployeeIdentityNotificationManager
             ]);
         } catch (Throwable $error) {
             error_log('Notification delivery audit failed: ' . $error->getMessage());
+        }
+    }
+
+    private function recordEmailDelivery(int $notificationId, string $recipient): void
+    {
+        try {
+            if (!$this->tableExists('notification_delivery_outbox')) {
+                return;
+            }
+            $event = $this->db->prepare("\n                SELECT id, event_type, severity, title, message, batch_id, client_id,
+                       open_count, target_url, status, COALESCE(updated_at, created_at) AS revision_at
+                FROM notification_events
+                WHERE id = :notification_id
+            ");
+            $event->execute([':notification_id' => $notificationId]);
+            $payload = $event->fetch(PDO::FETCH_ASSOC);
+            if (!$payload || ($payload['status'] ?? '') !== 'open') {
+                return;
+            }
+            $revision = hash('sha256', json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+            $delivery = $this->db->prepare("\n                INSERT IGNORE INTO notification_delivery_outbox (
+                    delivery_uid, notification_id, idempotency_key, recipient, channel,
+                    delivery_payload, delivery_status, attempt_count, available_at
+                ) VALUES (
+                    :delivery_uid, :notification_id, :idempotency_key, :recipient, 'email',
+                    :delivery_payload, 'pending', 0, NOW()
+                )
+            ");
+            $delivery->execute([
+                ':delivery_uid' => $this->identityUid('NDEL'),
+                ':notification_id' => $notificationId,
+                ':idempotency_key' => hash('sha256', implode('|', [$notificationId, $recipient, 'email', $revision])),
+                ':recipient' => $recipient,
+                ':delivery_payload' => json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            ]);
+        } catch (Throwable $error) {
+            error_log('Employee identity email delivery enqueue failed: ' . $error->getMessage());
         }
     }
 
@@ -817,9 +963,12 @@ class EmployeeIdentityNotificationManager
 
     private function loadBatch(int $batchId, bool $forUpdate = false): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT b.*, t.client_id, t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = t.client_id\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
+        $stmt = $this->db->prepare("\n            SELECT b.*,\n                   COALESCE(b.client_id, t.client_id) AS client_id,\n                   COALESCE(b.location_id, t.location_id) AS location_id,\n                   t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = COALESCE(b.client_id, t.client_id)\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
         $stmt->execute([':batch_id' => $batchId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && (int)($row['is_synthetic'] ?? 0) === 1) {
+            $row['identity_policy'] = 'trusted_hris_identifier';
+        }
         return $row ?: null;
     }
 
@@ -832,7 +981,7 @@ class EmployeeIdentityNotificationManager
 
     private function loadException(int $exceptionId, bool $forUpdate = false): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT e.*, b.template_id, b.source_context, t.client_id\n            FROM dtr_employee_exceptions e\n            INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE e.id = :id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
+        $stmt = $this->db->prepare("\n            SELECT e.*, b.template_id, b.source_context, b.identity_policy,\n+                   COALESCE(b.client_id, t.client_id) AS client_id\n            FROM dtr_employee_exceptions e\n            INNER JOIN dtr_upload_batches b ON b.id = e.batch_id\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE e.id = :id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
         $stmt->execute([':id' => $exceptionId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;

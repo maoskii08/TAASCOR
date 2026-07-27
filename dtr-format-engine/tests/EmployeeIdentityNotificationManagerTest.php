@@ -145,10 +145,12 @@ try {
     $delivery->execute([':notification_id' => (int)$notification['id'], ':recipient' => $user]);
     check((int)$delivery->fetchColumn() >= 1, 'in-app notification delivery is recorded idempotently in the durable outbox');
 
-    $expectedOwners = (int)$db->query("\n        SELECT COUNT(DISTINCT employee_user_name)\n        FROM taascor_user_access\n        WHERE access_level IN (1, 2, 3) AND is_active = b'1'\n    ")->fetchColumn();
+    $expectedOwnersQuery = $db->prepare("\n        SELECT COUNT(DISTINCT employee_user_name)\n        FROM taascor_user_access\n        WHERE is_active = b'1' AND access_level IN (1, 2, 3)\n    ");
+    $expectedOwnersQuery->execute();
+    $expectedOwners = (int)$expectedOwnersQuery->fetchColumn();
     $actualOwners = $db->prepare("\n        SELECT COUNT(DISTINCT r.user_name)\n        FROM notification_recipients r\n        INNER JOIN taascor_user_access u\n          ON u.employee_user_name COLLATE utf8mb4_unicode_ci = r.user_name COLLATE utf8mb4_unicode_ci\n        WHERE r.notification_id = :notification_id\n          AND u.access_level IN (1, 2, 3)\n          AND u.is_active = b'1'\n    ");
     $actualOwners->execute([':notification_id' => (int)$notification['id']]);
-    check((int)$actualOwners->fetchColumn() === $expectedOwners, 'active Admin, HR, and Payroll owners receive the identity notification');
+    check((int)$actualOwners->fetchColumn() === $expectedOwners, 'active Admin, HR, and Payroll owners receive every identity notification');
 
     echo "RESULT: Employee identity notification flow passed.\n";
 } finally {

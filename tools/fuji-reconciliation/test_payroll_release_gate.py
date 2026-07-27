@@ -17,9 +17,11 @@ def expected_row(source_id: str = "1001") -> dict[str, object]:
         "expected_pagibig": 100,
         "expected_tax": 50,
         "expected_other_deductions": 25,
-        "expected_total_deductions": 875,
+        "expected_attendance_deduction": 25,
+        "expected_printed_total_deductions": 875,
+        "expected_total_deductions": 900,
         "expected_taxable": 5950,
-        "expected_net_pay": 5875,
+        "expected_net_pay": 5850,
     }
 
 
@@ -35,9 +37,11 @@ def actual_row(source_id: str = "1001") -> dict[str, object]:
         "pagibig": 100,
         "withholding_tax": 50,
         "other_deductions": 25,
-        "total_deductions": 875,
+        "attendance_deduction": 25,
+        "printed_total_deductions": 875,
+        "total_deductions": 900,
         "taxable": 5950,
-        "net_pay": 5875,
+        "net_pay": 5850,
         "employee_loan": 0,
         "loan_ledger_total": 0,
         "other_deduction_ledger_total": 25,
@@ -63,12 +67,21 @@ class PayrollReleaseGateTest(unittest.TestCase):
 
     def test_one_cent_difference_blocks_release(self) -> None:
         actual = actual_row()
-        actual["net_pay"] = 5874.99
+        actual["net_pay"] = 5849.99
         result = compare_release([expected_row()], [actual], run_metadata())
         codes = {blocker["code"] for blocker in result["blockers"]}
         self.assertEqual(result["status"], "blocked")
         self.assertIn("COMPONENT_MISMATCH", codes)
         self.assertIn("NET_PAY_EQUATION_MISMATCH", codes)
+
+    def test_printed_and_attendance_deductions_must_reconcile_to_effective_total(self) -> None:
+        actual = actual_row()
+        actual["attendance_deduction"] = 24.99
+        result = compare_release([expected_row()], [actual], run_metadata())
+        codes = {blocker["code"] for blocker in result["blockers"]}
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("COMPONENT_MISMATCH", codes)
+        self.assertIn("DEDUCTION_TOTAL_EQUATION_MISMATCH", codes)
 
     def test_missing_and_unexpected_population_block_release(self) -> None:
         result = compare_release(

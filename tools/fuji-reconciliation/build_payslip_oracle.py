@@ -66,6 +66,7 @@ def parse_block(block: str, index: int) -> dict[str, object]:
     employee_line = first_line(lines, r"Employee Name")
     employee_match = re.search(r"Employee Name\s+(.+)$", employee_line, re.IGNORECASE)
     name = employee_match.group(1).strip() if employee_match else ""
+    name = re.split(r"\s{2,}(?:Department|Branch)\b", name, maxsplit=1, flags=re.IGNORECASE)[0].strip()
 
     basic_rate_line = first_line(lines, r"^\s*BASIC RATE")
     basic_line = first_line(lines, r"^\s*BASIC(?!\s+RATE)\s+")
@@ -78,31 +79,60 @@ def parse_block(block: str, index: int) -> dict[str, object]:
     rest_day_line = first_line(lines, r"^\s*DAY OFF")
     rest_regular_line = first_line(lines, r"^\s*DO/REG")
     rest_special_line = first_line(lines, r"^\s*DO/SPC")
-    total_ot_line = first_line(lines, r"^\s*TOTAL OT(?!HER)")
+    total_ot_line = first_line(lines, r"\bTOTAL OT(?!HER)")
 
     gross_values = amounts(first_line(lines, r"^\s*GROSS\s+"))
     taxable_values = amounts(first_line(lines, r"^\s*TAXABLE(?!\s+ALLOW)\s+"))
-    total_deduction_values = amounts(first_line(lines, r"TOTAL DEDUCTIONS"))
-    net_pay_values = amounts(first_line(lines, r"NET PAY"))
+    total_deduction_line = first_line(lines, r"TOTAL DEDUCTIONS")
+    total_deduction_values = amounts(total_deduction_line)
+    net_pay_line = first_line(lines, r"NET PAY")
     other_earnings_values = amounts(first_line(lines, r"^\s*OTHER EARNINGS"))
-    total_other_addition_values = amounts(first_line(lines, r"TOTAL OTHER ADDITIONS"))
-    total_other_deduction_values = amounts(first_line(lines, r"TOTAL OTHER DEDUCTIONS"))
+    total_other_addition_line = first_line(lines, r"TOTAL OTHER ADDITIONS")
+    total_other_deduction_line = first_line(lines, r"TOTAL OTHER DEDUCTIONS")
 
     top_lines = lines[:16]
     philhealth_line = first_line(top_lines, r"PHILHEALTH")
     pagibig_line = first_line(top_lines, r"^\s*PAGIBIG|\sPAGIBIG\s*$")
     wtax_line = first_line(top_lines, r"WTAX")
     absent_line = first_line(top_lines, r"ABSENT")
-    tardy_line = first_line(top_lines, r"LATE/UNDERTIME")
-
-    ot_values = amounts(total_ot_line)
+    total_ot_match = re.search(r"\bTOTAL OT(?!HER)", total_ot_line, re.IGNORECASE)
+    ot_values = amounts(total_ot_line[total_ot_match.end() :]) if total_ot_match else []
+    daily_rate = basic_rate_values[0] if basic_rate_values else None
+    gross = gross_values[0] if gross_values else None
+    net_pay_values = amounts(net_pay_line)
+    net_pay = amount_after(net_pay_line, "NET PAY") if net_pay_values else None
+    printed_total_deductions = (
+        amount_after(total_deduction_line, "TOTAL DEDUCTIONS")
+        if total_deduction_values
+        else None
+    )
+    effective_total_deductions = (
+        money(gross - net_pay)
+        if gross is not None and net_pay is not None
+        else None
+    )
+    late_undertime_amount = (
+        money(effective_total_deductions - printed_total_deductions)
+        if effective_total_deductions is not None
+        and printed_total_deductions is not None
+        else Decimal("0")
+    )
+    if late_undertime_amount < 0:
+        raise ValueError(
+            f"Payslip {index + 1} has printed deductions greater than gross minus net pay"
+        )
+    late_undertime_hours = (
+        (late_undertime_amount * Decimal("8") / daily_rate).quantize(Decimal("0.0001"))
+        if daily_rate not in (None, Decimal("0"))
+        else Decimal("0")
+    )
     record = {
         "oracle_index": index + 1,
         "employee_name": name,
         "period_start": header_match.group(1) if header_match else "",
         "period_end": header_match.group(2) if header_match else "",
         "pay_date": header_match.group(3) if header_match else "",
-        "daily_rate": as_number(basic_rate_values[0] if basic_rate_values else None),
+        "daily_rate": as_number(daily_rate),
         "basic_days": as_number(basic_values[0] if basic_values else None),
         "basic_pay": as_number(basic_values[1] if len(basic_values) > 1 else None),
         "other_earnings": as_number(other_earnings_values[0] if other_earnings_values else Decimal("0")),
@@ -111,7 +141,9 @@ def parse_block(block: str, index: int) -> dict[str, object]:
         "pagibig": as_number(amount_after(pagibig_line, "PAGIBIG")),
         "withholding_tax": as_number(amount_after(wtax_line, "WTAX (tax code Z)")),
         "absent_deduction": as_number(amount_after(absent_line, "ABSENT")),
-        "late_undertime": as_number(amount_after(tardy_line, "LATE/UNDERTIME")),
+        "late_undertime": as_number(late_undertime_hours),
+        "late_undertime_hours": as_number(late_undertime_hours),
+        "late_undertime_amount": as_number(late_undertime_amount),
         "regular_ot_total": as_number(earnings_total(regular_ot_line, r"REGULAR OT")),
         "regular_holiday_total": as_number(earnings_total(regular_holiday_line, r"REGULAR HOL\.")),
         "special_holiday_total": as_number(earnings_total(special_holiday_line, r"SPECIAL HOL\.")),
@@ -120,12 +152,22 @@ def parse_block(block: str, index: int) -> dict[str, object]:
         "rest_special_holiday_total": as_number(earnings_total(rest_special_line, r"DO/SPC HOL\.")),
         "total_ot": as_number(ot_values[-1] if ot_values else Decimal("0")),
         "total_ot_hours_printed": [as_number(value) for value in ot_values[:-1]],
-        "gross": as_number(gross_values[0] if gross_values else None),
+        "gross": as_number(gross),
         "taxable": as_number(taxable_values[0] if taxable_values else None),
-        "total_other_additions_printed": as_number(total_other_addition_values[-1] if total_other_addition_values else None),
-        "total_other_deductions": as_number(total_other_deduction_values[-1] if total_other_deduction_values else Decimal("0")),
-        "total_deductions": as_number(total_deduction_values[-1] if total_deduction_values else None),
-        "net_pay": as_number(net_pay_values[-1] if net_pay_values else None),
+        "total_other_additions_printed": as_number(
+            amount_after(total_other_addition_line, "TOTAL OTHER ADDITIONS")
+            if amounts(total_other_addition_line)
+            else None
+        ),
+        "total_other_deductions": as_number(
+            amount_after(total_other_deduction_line, "TOTAL OTHER DEDUCTIONS")
+            if amounts(total_other_deduction_line)
+            else Decimal("0")
+        ),
+        "printed_total_deductions": as_number(printed_total_deductions),
+        "effective_total_deductions": as_number(effective_total_deductions),
+        "total_deductions": as_number(effective_total_deductions),
+        "net_pay": as_number(net_pay),
     }
     return record
 
@@ -266,6 +308,8 @@ def main() -> None:
                 "expected_pagibig": expected["pagibig"],
                 "expected_tax": expected["withholding_tax"],
                 "expected_other_deductions": expected["total_other_deductions"],
+                "expected_attendance_deduction": expected["late_undertime_amount"],
+                "expected_printed_total_deductions": expected["printed_total_deductions"],
                 "expected_total_deductions": expected["total_deductions"],
                 "expected_taxable": expected["taxable"],
                 "expected_net_pay": expected["net_pay"],
@@ -303,6 +347,8 @@ def main() -> None:
         "rows_with_leave_or_adjustment": sum(1 for row in regression if row["has_leave_or_adjustment"]),
         "total_expected_gross": as_number(sum((dec(row["expected_gross"]) for row in regression), Decimal("0"))),
         "total_expected_net_pay": as_number(sum((dec(row["expected_net_pay"]) for row in regression), Decimal("0"))),
+        "total_expected_attendance_deductions": as_number(sum((dec(row["expected_attendance_deduction"]) for row in regression), Decimal("0"))),
+        "total_expected_printed_deductions": as_number(sum((dec(row["expected_printed_total_deductions"]) for row in regression), Decimal("0"))),
         "total_expected_deductions": as_number(sum((dec(row["expected_total_deductions"]) for row in regression), Decimal("0"))),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

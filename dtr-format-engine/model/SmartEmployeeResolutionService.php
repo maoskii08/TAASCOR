@@ -64,6 +64,7 @@ final class SmartEmployeeResolutionService
                 $resolution['engine']['results'],
                 static function (array $result): bool {
                     return ($result['classification'] ?? '') === 'auto_eligible_shadow'
+                        && ($result['match_basis'] ?? '') !== 'approved_alias'
                         && (int)($result['assigned_employee_id'] ?? 0) > 0;
                 }
             ));
@@ -252,9 +253,11 @@ final class SmartEmployeeResolutionService
             'period_start' => $periodStart,
             'period_end' => $periodEnd,
         ], [
-            // Fuji source IDs are vendor identifiers, not governed HRIS IDs.
-            // Approved aliases remain deterministic; raw direct-ID matches do not.
-            'direct_identifier_matching' => (string)($batch['source_type'] ?? '') !== 'fuji_payroll_summary',
+            // Vendor identifiers remain fail-closed unless the approved adapter
+            // explicitly declares that source IDs are governed HRIS identifiers.
+            'direct_identifier_matching' =>
+                (string)($batch['identity_policy'] ?? 'approved_mapping_required')
+                    === 'trusted_hris_identifier',
         ]);
 
         foreach ($engine['results'] as &$result) {
@@ -280,6 +283,12 @@ final class SmartEmployeeResolutionService
                 $result['classification'] = 'block';
                 $result['classification_reason'] = $preflightCode;
                 $result['assigned_employee_id'] = null;
+            } elseif (
+                ($result['classification'] ?? '') === 'auto_eligible_shadow'
+                && ($result['match_basis'] ?? '') === 'approved_alias'
+            ) {
+                $result['classification'] = 'approved';
+                $result['classification_reason'] = 'owner_approved_alias';
             }
             $result['source_employee_id'] = (string)($source['source_employee_id'] ?? '');
             $result['source_employee_name'] = (string)($source['employee_name'] ?? '');
@@ -332,6 +341,7 @@ final class SmartEmployeeResolutionService
         $sourceId = trim((string)$source['source_employee_id']);
         $normalizedId = $this->engine->normalizeIdentifier($sourceId);
         $periodStart = (string)$resolution['period_start'];
+        $periodEnd = (string)$resolution['period_end'];
 
         $legacy = $this->db->prepare("\n            SELECT id, employee_id\n            FROM employee_identity_map\n            WHERE client_id = :client_id\n              AND source_namespace = :source_namespace\n              AND source_employee_id = :source_employee_id\n            FOR UPDATE\n        ");
         $legacy->execute([
@@ -445,10 +455,13 @@ final class SmartEmployeeResolutionService
 
     private function loadBatch(int $batchId, bool $forUpdate): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT b.*, t.client_id, t.location_id, t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = t.client_id\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '')
+        $stmt = $this->db->prepare("\n            SELECT b.*,\n+                   COALESCE(b.client_id, t.client_id) AS client_id,\n+                   COALESCE(b.location_id, t.location_id) AS location_id,\n+                   t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = COALESCE(b.client_id, t.client_id)\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $stmt->execute([':batch_id' => $batchId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && (int)($row['is_synthetic'] ?? 0) === 1) {
+            $row['identity_policy'] = 'trusted_hris_identifier';
+        }
         return $row ?: null;
     }
 

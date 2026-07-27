@@ -15,11 +15,16 @@ require('../model/RealSampleAdapter.php');
 require('../model/PayrollBasisPreview.php');
 require('../model/EmployeeIdentityNotificationManager.php');
 require('../model/FujiPayrollSummaryAdapter.php');
+require('../model/DtrAdapterRegistry.php');
+require('../model/GenericRealDtrUploadService.php');
 require('../model/SmartEmployeeResolutionService.php');
 require('../model/PayrollImportRunManager.php');
+require('../model/PayrollPopulationExceptionManager.php');
 
 $model = new TemplateManager;
 $model->db = $pdoConn;
+$model->allow_all_clients = auth_has_global_client_access();
+$model->allowed_client_ids = auth_client_ids();
 $parser = new SyntheticUploadParser;
 $parser->db = $pdoConn;
 $adapter = new RealSampleAdapter;
@@ -30,21 +35,34 @@ $identityManager = new EmployeeIdentityNotificationManager;
 $identityManager->db = $pdoConn;
 $fujiAdapter = new FujiPayrollSummaryAdapter;
 $fujiAdapter->db = $pdoConn;
+$adapterRegistry = new DtrAdapterRegistry;
+$adapterRegistry->db = $pdoConn;
+$adapterRegistry->allow_all_clients = auth_has_global_client_access();
+$adapterRegistry->allowed_client_ids = auth_client_ids();
+$realDtrUpload = new GenericRealDtrUploadService;
+$realDtrUpload->db = $pdoConn;
+$realDtrUpload->registry = $adapterRegistry;
+$realDtrUpload->tabularParser = $parser;
+$realDtrUpload->fujiAdapter = $fujiAdapter;
 $smartResolution = new SmartEmployeeResolutionService;
 $smartResolution->db = $pdoConn;
 $payrollImportRuns = new PayrollImportRunManager;
 $payrollImportRuns->db = $pdoConn;
+$populationExceptions = new PayrollPopulationExceptionManager;
+$populationExceptions->db = $pdoConn;
 $request = $_POST['request'] ?? $_GET['request'] ?? '';
 $user = auth_user() ?: 'local_admin';
 
 $mutatingRequests = [
-    'save-template', 'deactivate-template', 'upload-synthetic', 'upload-fuji-summary',
+    'save-template', 'deactivate-template', 'upload-synthetic', 'upload-real-dtr',
+    'upload-fuji-summary', 'create-adapter-profile', 'approve-adapter-profile',
     'clear-synthetic-batches', 'run-real-sample-adapters', 'clear-real-sample-adapters',
     'save-adapter-approval', 'run-payroll-basis-preview', 'sync-employee-identities',
     'approve-smart-employee-cohort', 'create-payroll-import-run',
     'approve-payroll-import-run', 'cancel-payroll-import-run',
     'mark-notification-read', 'resolve-employee-exception', 'set-smart-payroll-enrollment',
-    'save-payroll-rule-set',
+    'save-payroll-rule-set', 'import-population-exceptions', 'resolve-population-exception',
+    'sync-population-notification',
 ];
 if (in_array($request, $mutatingRequests, true) && ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     http_response_code(405);
@@ -60,6 +78,8 @@ $adminOnlyRequests = [
     'run-real-sample-adapters',
     'clear-real-sample-adapters',
     'save-adapter-approval',
+    'create-adapter-profile',
+    'approve-adapter-profile',
     'set-smart-payroll-enrollment',
     'save-payroll-rule-set',
 ];
@@ -81,6 +101,7 @@ if (in_array($request, $identityOwnerRequests, true) && !in_array(auth_level(), 
 
 $payrollOwnerRequests = [
     'create-payroll-import-run', 'approve-payroll-import-run', 'cancel-payroll-import-run',
+    'import-population-exceptions',
 ];
 if (in_array($request, $payrollOwnerRequests, true) && !in_array(auth_level(), [1, 3], true)) {
     http_response_code(403);
@@ -88,9 +109,15 @@ if (in_array($request, $payrollOwnerRequests, true) && !in_array(auth_level(), [
     exit;
 }
 
+if ($request === 'resolve-population-exception' && !in_array(auth_level(), [1, 2, 3], true)) {
+    http_response_code(403);
+    echo json_encode(['success' => 0, 'error' => 'Admin, HR, or Payroll ownership is required for a population disposition.']);
+    exit;
+}
+
 function approved_payroll_ruleset($db, int $batchId): array
 {
-    $stmt = $db->prepare("\n        SELECT t.client_id, r.parsed_payload
+    $stmt = $db->prepare("\n        SELECT COALESCE(b.client_id, t.client_id) AS client_id, r.parsed_payload
         FROM dtr_upload_batches b
         INNER JOIN dtr_format_templates t ON t.id = b.template_id
         INNER JOIN dtr_upload_staging_rows r ON r.batch_id = b.id
@@ -145,6 +172,131 @@ function approved_payroll_ruleset($db, int $batchId): array
         'ruleset_version' => (string)$matches[0]['ruleset_version'],
         'rules' => $rules,
     ];
+}
+
+function requireTemplateClientScope($db, int $templateId): void
+{
+    $stmt = $db->prepare('SELECT client_id FROM dtr_format_templates WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $templateId]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested template was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+}
+
+function requireBatchClientScope($db, int $batchId): void
+{
+    $stmt = $db->prepare("\n        SELECT COALESCE(b.client_id, t.client_id) AS client_id
+        FROM dtr_upload_batches b
+        INNER JOIN dtr_format_templates t ON t.id = b.template_id
+        WHERE b.id = :id
+        LIMIT 1
+    ");
+    $stmt->execute([':id' => $batchId]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested DTR batch was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+}
+
+function requirePayrollRunClientScope($db, int $runId): void
+{
+    $stmt = $db->prepare('SELECT client_id FROM payroll_import_runs WHERE id = :id LIMIT 1');
+    $stmt->execute([':id' => $runId]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested payroll run was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+}
+
+function requireExceptionClientScope($db, int $exceptionId): void
+{
+    $stmt = $db->prepare("\n        SELECT COALESCE(b.client_id, t.client_id) AS client_id
+        FROM dtr_employee_exceptions e
+        INNER JOIN dtr_upload_batches b ON b.id = e.batch_id
+        INNER JOIN dtr_format_templates t ON t.id = b.template_id
+        WHERE e.id = :id
+        LIMIT 1
+    ");
+    $stmt->execute([':id' => $exceptionId]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested employee exception was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+}
+
+function requirePopulationExceptionClientScope($db, int $exceptionId): void
+{
+    $stmt = $db->prepare(
+        'SELECT client_id FROM payroll_population_exceptions WHERE id = :id LIMIT 1'
+    );
+    $stmt->execute([':id' => $exceptionId]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested population exception was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+}
+
+$directClientRequests = ['save-payroll-rule-set', 'smart-payroll-enrollment', 'set-smart-payroll-enrollment'];
+if (in_array($request, $directClientRequests, true)) {
+    auth_require_client_id((int)($_GET['client_id'] ?? $_POST['client_id'] ?? 0));
+}
+
+$batchScopedRequests = [
+    'batch-rows', 'sync-employee-identities', 'employee-identity-exceptions',
+    'employee-identity-gate', 'smart-employee-resolution-preview',
+    'approve-smart-employee-cohort', 'create-payroll-import-run',
+    'latest-payroll-import-run', 'payroll-population-exceptions',
+    'import-population-exceptions', 'sync-population-notification',
+];
+if (in_array($request, $batchScopedRequests, true)) {
+    $scopedBatchId = (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0);
+    if ($scopedBatchId > 0) {
+        requireBatchClientScope($pdoConn, $scopedBatchId);
+    } else {
+        http_response_code(400);
+        echo json_encode(['success' => 0, 'error' => 'Select one staged DTR batch.']);
+        exit;
+    }
+}
+
+$runScopedRequests = ['payroll-import-run-status', 'approve-payroll-import-run', 'cancel-payroll-import-run'];
+if (in_array($request, $runScopedRequests, true)) {
+    requirePayrollRunClientScope($pdoConn, (int)($_GET['run_id'] ?? $_POST['run_id'] ?? 0));
+}
+
+if ($request === 'resolve-employee-exception') {
+    requireExceptionClientScope($pdoConn, (int)($_POST['exception_id'] ?? 0));
+}
+if ($request === 'resolve-population-exception') {
+    requirePopulationExceptionClientScope($pdoConn, (int)($_POST['exception_id'] ?? 0));
+}
+if ($request === 'get-template') {
+    requireTemplateClientScope($pdoConn, (int)($_GET['id'] ?? $_POST['id'] ?? 0));
+}
+if ($request === 'upload-synthetic') {
+    requireTemplateClientScope($pdoConn, (int)($_POST['template_id'] ?? 0));
+}
+if ($request === 'upload-real-dtr') {
+    auth_require_client_id((int)($_POST['client_id'] ?? 0));
+}
+if ($request === 'upload-fuji-summary') {
+    auth_require_client_id(FujiPayrollSummaryAdapter::CLIENT_ID);
 }
 
 switch ($request) {
@@ -281,8 +433,32 @@ switch ($request) {
     case 'list-batches':
         echo json_encode($model->listBatches());
         break;
+    case 'adapter-profiles':
+        echo json_encode($adapterRegistry->listProfiles(false));
+        break;
+    case 'approved-adapter-profiles':
+        echo json_encode($adapterRegistry->listProfiles(true));
+        break;
+    case 'create-adapter-profile':
+        echo json_encode($adapterRegistry->createDraftFromTemplate($_POST, $user));
+        break;
+    case 'approve-adapter-profile':
+        echo json_encode($adapterRegistry->approveProfile(
+            (int)($_POST['profile_id'] ?? 0),
+            $user,
+            (string)($_POST['approval_reason'] ?? '')
+        ));
+        break;
     case 'upload-synthetic':
         $upload = $parser->uploadSynthetic($_POST, $_FILES['synthetic_file'] ?? [], $user);
+        if (!empty($upload['success']) && !empty($upload['batch_id'])) {
+            $upload['identity_gate'] = $identityManager->syncBatch((int)$upload['batch_id'], $user);
+        }
+        echo json_encode($upload);
+        break;
+    case 'upload-real-dtr':
+        @set_time_limit(180);
+        $upload = $realDtrUpload->stage($_POST, $_FILES['dtr_file'] ?? [], $user);
         if (!empty($upload['success']) && !empty($upload['batch_id'])) {
             $upload['identity_gate'] = $identityManager->syncBatch((int)$upload['batch_id'], $user);
         }
@@ -366,10 +542,13 @@ switch ($request) {
         echo json_encode($identityManager->syncBatch((int)($_POST['batch_id'] ?? 0), $user));
         break;
     case 'employee-identity-exceptions':
-        echo json_encode($identityManager->listExceptions(
-            (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0),
-            (string)($_GET['status'] ?? $_POST['status'] ?? 'open')
-        ));
+        echo json_encode(
+            $identityManager->listExceptions(
+                (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0),
+                (string)($_GET['status'] ?? $_POST['status'] ?? 'open')
+            ),
+            JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
         break;
     case 'employee-identity-gate':
         echo json_encode([
@@ -378,6 +557,57 @@ switch ($request) {
                 (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0)
             ),
         ]);
+        break;
+    case 'payroll-population-exceptions':
+        echo json_encode(
+            $populationExceptions->listForBatch(
+                (int)($_GET['batch_id'] ?? $_POST['batch_id'] ?? 0),
+                (string)($_GET['status'] ?? $_POST['status'] ?? 'all')
+            ),
+            JSON_INVALID_UTF8_SUBSTITUTE | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
+        break;
+    case 'import-population-exceptions':
+        $records = json_decode((string)($_POST['records'] ?? ''), true);
+        $result = $populationExceptions->importForBatch(
+            (int)($_POST['batch_id'] ?? 0),
+            is_array($records) ? $records : [],
+            $user
+        );
+        if (!empty($result['success'])) {
+            $result['notification'] = $identityManager->syncPopulationNotification(
+                (int)($_POST['batch_id'] ?? 0),
+                $user
+            );
+        }
+        echo json_encode($result);
+        break;
+    case 'resolve-population-exception':
+        $exceptionId = (int)($_POST['exception_id'] ?? 0);
+        $batchLookup = $pdoConn->prepare(
+            'SELECT batch_id FROM payroll_population_exceptions WHERE id = :id LIMIT 1'
+        );
+        $batchLookup->execute([':id' => $exceptionId]);
+        $populationBatchId = (int)$batchLookup->fetchColumn();
+        $result = $populationExceptions->resolve(
+            $exceptionId,
+            (string)($_POST['disposition'] ?? ''),
+            (string)($_POST['reason'] ?? ''),
+            $user
+        );
+        if (!empty($result['success']) && $populationBatchId > 0) {
+            $result['notification'] = $identityManager->syncPopulationNotification(
+                $populationBatchId,
+                $user
+            );
+        }
+        echo json_encode($result);
+        break;
+    case 'sync-population-notification':
+        echo json_encode($identityManager->syncPopulationNotification(
+            (int)($_POST['batch_id'] ?? 0),
+            $user
+        ));
         break;
     case 'smart-employee-resolution-preview':
         @set_time_limit(180);

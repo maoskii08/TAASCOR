@@ -3,6 +3,8 @@
 class TemplateManager
 {
     public $db = null;
+    public array $allowed_client_ids = [];
+    public bool $allow_all_clients = false;
 
     private const GENERIC_ERROR = 'Unable to complete the DTR Format Engine request. Please contact your administrator.';
 
@@ -18,6 +20,7 @@ class TemplateManager
                 'canonical_fields' => [
                     'employee_id',
                     'employee_code',
+                    'employee_identifier',
                     'employee_name',
                     'client',
                     'site',
@@ -27,6 +30,9 @@ class TemplateManager
                     'break_start',
                     'break_end',
                     'hours_worked',
+                    'worked_hours',
+                    'worked_days',
+                    'regular_hours',
                     'late_minutes',
                     'undertime_minutes',
                     'overtime_hours',
@@ -42,6 +48,7 @@ class TemplateManager
     public function listTemplates(): array
     {
         try {
+            [$clientScope, $clientParams] = $this->clientScope('t');
             $stmt = $this->db->prepare("
                 SELECT
                     t.id,
@@ -65,6 +72,7 @@ class TemplateManager
                 LEFT JOIN taascor_client c ON c.client_id = t.client_id
                 LEFT JOIN taascor_client_location l ON l.location_id = t.location_id
                 LEFT JOIN dtr_format_template_fields f ON f.template_id = t.id
+                WHERE {$clientScope}
                 GROUP BY
                     t.id, t.template_name, t.client_id, c.client_name,
                     t.location_id, l.location_name, t.source_type, t.file_type,
@@ -72,7 +80,7 @@ class TemplateManager
                     t.is_active, t.created_by, t.created_at, t.updated_by, t.updated_at
                 ORDER BY t.is_active DESC, t.template_name ASC
             ");
-            $stmt->execute();
+            $stmt->execute($clientParams);
 
             return ['success' => 1, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)];
         } catch (\Throwable $th) {
@@ -119,6 +127,27 @@ class TemplateManager
             $this->db->beginTransaction();
 
             if ($data['id'] > 0) {
+                $current = $this->db->prepare(
+                    'SELECT client_id, location_id FROM dtr_format_templates WHERE id = :id FOR UPDATE'
+                );
+                $current->execute([':id' => $data['id']]);
+                $currentScope = $current->fetch(PDO::FETCH_ASSOC);
+                if (!$currentScope) {
+                    throw new DomainException('The DTR template was not found.');
+                }
+                $scopeChanged = $this->nullableInt($currentScope['client_id'] ?? null) !== $data['client_id']
+                    || $this->nullableInt($currentScope['location_id'] ?? null) !== $data['location_id'];
+                if ($scopeChanged) {
+                    $used = $this->db->prepare(
+                        'SELECT COUNT(*) FROM dtr_upload_batches WHERE template_id = :template_id'
+                    );
+                    $used->execute([':template_id' => $data['id']]);
+                    if ((int)$used->fetchColumn() > 0) {
+                        throw new DomainException(
+                            'Client and site cannot be changed after a template has been used. Create a new template version.'
+                        );
+                    }
+                }
                 $stmt = $this->db->prepare("
                     UPDATE dtr_format_templates
                     SET template_name = :template_name,
@@ -200,6 +229,11 @@ class TemplateManager
             $this->db->commit();
 
             return ['success' => 1, 'id' => $templateId];
+        } catch (DomainException $error) {
+            if ($this->db && $this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            return ['success' => 0, 'error' => $error->getMessage()];
         } catch (\Throwable $th) {
             if ($this->db && $this->db->inTransaction()) {
                 $this->db->rollBack();
@@ -234,17 +268,27 @@ class TemplateManager
     public function listBatches(): array
     {
         try {
+            [$clientScope, $clientParams] = $this->clientScope('b');
             $stmt = $this->db->prepare("
                 SELECT
                     b.id,
                     b.batch_uid,
                     b.template_id,
                     t.template_name,
+                    b.client_id,
+                    b.location_id,
+                    b.adapter_profile_id,
+                    b.adapter_key,
+                    b.adapter_version,
+                    b.identity_policy,
                     b.original_filename,
                     b.uploaded_by,
                     b.uploaded_at,
                     b.checksum,
                     b.row_count,
+                    b.accepted_row_count,
+                    b.rejected_row_count,
+                    b.was_truncated,
                     b.validation_status,
                     b.error_count,
                     b.processing_status,
@@ -254,15 +298,19 @@ class TemplateManager
                 FROM dtr_upload_batches b
                 LEFT JOIN dtr_format_templates t ON t.id = b.template_id
                 LEFT JOIN dtr_upload_staging_rows r ON r.batch_id = b.id
+                WHERE {$clientScope}
                 GROUP BY
                     b.id, b.batch_uid, b.template_id, t.template_name,
+                    b.client_id, b.location_id, b.adapter_profile_id,
+                    b.adapter_key, b.adapter_version, b.identity_policy,
                     b.original_filename, b.uploaded_by, b.uploaded_at,
-                    b.checksum, b.row_count, b.validation_status,
+                    b.checksum, b.row_count, b.accepted_row_count,
+                    b.rejected_row_count, b.was_truncated, b.validation_status,
                     b.error_count, b.processing_status, b.is_synthetic,
                     b.source_context
                 ORDER BY b.uploaded_at DESC, b.id DESC
             ");
-            $stmt->execute();
+            $stmt->execute($clientParams);
 
             return ['success' => 1, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)];
         } catch (\Throwable $th) {
@@ -273,15 +321,35 @@ class TemplateManager
 
     private function fetchClients(): array
     {
+        [$clientScope, $clientParams] = $this->clientScope('taascor_client');
         $stmt = $this->db->prepare("
             SELECT client_id, client_name
             FROM taascor_client
             WHERE client_name <> 'No Client'
               AND COALESCE(is_active, 1) = 1
+              AND {$clientScope}
             ORDER BY client_name ASC
         ");
-        $stmt->execute();
+        $stmt->execute($clientParams);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    private function clientScope(string $alias): array
+    {
+        if ($this->allow_all_clients) {
+            return ['1 = 1', []];
+        }
+        $ids = array_values(array_unique(array_filter(
+            array_map('intval', $this->allowed_client_ids),
+            static fn(int $id): bool => $id > 0
+        )));
+        if (count($ids) === 0) {
+            return ['1 = 0', []];
+        }
+        return [
+            "{$alias}.client_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ')',
+            $ids,
+        ];
     }
 
     private function fetchLocations(): array

@@ -29,4 +29,16 @@ smart_service_check(
     'invalid workbook dates remain unavailable instead of being guessed'
 );
 
+$approvalMethod = new ReflectionMethod(SmartEmployeeResolutionService::class, 'approveAlias');
+$serviceSource = file(__DIR__ . '/../model/SmartEmployeeResolutionService.php');
+$approvalSource = implode('', array_slice(
+    $serviceSource,
+    $approvalMethod->getStartLine() - 1,
+    $approvalMethod->getEndLine() - $approvalMethod->getStartLine() + 1
+));
+smart_service_check(
+    str_contains($approvalSource, "\$periodEnd = (string)\$resolution['period_end'];"),
+    'safe-cohort aliases bind the payroll period end before period-effective conflict checks'
+);
+
 echo "RESULT: Smart employee resolution source-date rules passed.\n";

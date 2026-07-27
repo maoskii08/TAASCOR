@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../model/PayrollImportRunManager.php';
+require_once __DIR__ . '/../model/PayrollPopulationExceptionManager.php';
 
 $configPath = dirname(__DIR__, 2) . '/config/mysql-config.php';
 if (is_file($configPath)) {
@@ -84,6 +85,8 @@ try {
         '20260621_03_payroll_basis_preview.sql',
         '20260716_employee_identity_notifications.sql',
         '20260717_01_payroll_import_run_foundation.sql',
+        '20260726_02_payroll_population_exceptions.sql',
+        '20260727_03_multi_client_dtr_intake.sql',
     ] as $migration) {
         $db->exec((string)file_get_contents($migrationDir . $migration));
     }
@@ -195,6 +198,42 @@ try {
         'evidence' => ['test_fixture' => true],
     ], 'identity_owner');
     payroll_database_check(($mainAlias['success'] ?? 0) === 1, 'Fuji canonical handoff is backed by an approved alias');
+
+    $populationManager = new PayrollPopulationExceptionManager();
+    $populationManager->db = $db;
+    $populationImport = $populationManager->importForBatch($batchId, [[
+        'reference_employee_name' => 'Payslip Only, Employee',
+        'matched_employee_id' => 1001,
+        'evidence' => [
+            'source' => 'expected_payslip_reconciliation',
+            'pdf_page' => 1,
+            'pay_date' => '2026-07-05',
+        ],
+    ]], 'payroll_owner');
+    payroll_database_check(
+        ($populationImport['success'] ?? 0) === 1
+        && (int)($populationImport['summary']['open'] ?? 0) === 1,
+        'a payslip-only employee is recorded as an open population exception'
+    );
+    $populationBlocked = $manager->createFromStagedBatch($batchId, $options, 'payroll_maker');
+    payroll_database_check(
+        ($populationBlocked['success'] ?? 1) === 0
+        && ($populationBlocked['error_code'] ?? '') === 'BATCH_NOT_READY'
+        && (int)($populationBlocked['details']['open_population_exception_count'] ?? 0) === 1,
+        'an open payslip-to-DTR population exception blocks canonical run creation'
+    );
+    $populationExceptionId = (int)($populationImport['data'][0]['id'] ?? 0);
+    $populationResolved = $populationManager->resolve(
+        $populationExceptionId,
+        'approved_off_cycle',
+        'Payroll owner approved the documented off-cycle treatment for this test fixture.',
+        'payroll_owner'
+    );
+    payroll_database_check(
+        ($populationResolved['success'] ?? 0) === 1
+        && $populationManager->openCountForBatch($batchId) === 0,
+        'an evidence-backed owner disposition clears the population gate'
+    );
 
     $directBatch = $db->prepare("\n        INSERT INTO dtr_upload_batches (
             batch_uid, template_id, original_filename, uploaded_by, checksum,

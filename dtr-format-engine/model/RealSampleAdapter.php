@@ -3,6 +3,7 @@
 class RealSampleAdapter
 {
     public $db = null;
+    public ?string $profile_config_path = null;
 
     private const SOURCE_CONTEXT = 'real_sample_batch10_profile_adapter';
     private const GENERIC_ERROR = 'Unable to run the real sample adapter preview. Please contact your administrator.';
@@ -123,6 +124,83 @@ class RealSampleAdapter
                 $this->db->rollBack();
             }
             error_log('DTR real sample adapter failed: ' . $th->getMessage());
+            return ['success' => 0, 'error' => self::GENERIC_ERROR];
+        }
+    }
+
+    public function runSelectedAdapters(array $profileClientBindings, string $user): array
+    {
+        $user = trim($user);
+        if ($user === '' || !$profileClientBindings || count($profileClientBindings) > 10) {
+            return ['success' => 0, 'error' => 'Select one to ten sample profiles and a validation owner.'];
+        }
+
+        try {
+            $available = [];
+            foreach ($this->sampleConfigs() as $config) {
+                $available[strtoupper((string)$config['key'])] = $config;
+            }
+
+            $this->db->beginTransaction();
+            $results = [];
+            foreach ($profileClientBindings as $profileKey => $clientId) {
+                $profileKey = strtoupper(trim((string)$profileKey));
+                $clientId = (int)$clientId;
+                if ($profileKey === '' || $clientId <= 0 || !isset($available[$profileKey])) {
+                    throw new InvalidArgumentException('Every selected sample profile needs a valid client binding.');
+                }
+                $client = $this->db->prepare(
+                    'SELECT client_name FROM taascor_client WHERE client_id = :client_id LIMIT 1'
+                );
+                $client->execute([':client_id' => $clientId]);
+                $clientName = (string)$client->fetchColumn();
+                if ($clientName === '') {
+                    throw new InvalidArgumentException('A selected client binding does not exist.');
+                }
+
+                $config = $available[$profileKey];
+                if (($config['mode'] ?? '') === 'unsupported') {
+                    throw new DomainException("The {$profileKey} sample format is not supported by the preview parser.");
+                }
+                $config['client_id'] = $clientId;
+                $config['location_id'] = 0;
+                $config['template_name'] = (string)$config['template_name'] . " [Client {$clientId}]";
+
+                $templateId = $this->ensureTemplate($config, $user);
+                $rows = $this->buildRows($config);
+                $batchId = $this->stageRows($config, $templateId, $rows, $user);
+                $stats = $this->rowStats($rows);
+                $results[] = [
+                    'key' => $profileKey,
+                    'client_id' => $clientId,
+                    'client_name' => $clientName,
+                    'mode' => (string)$config['mode'],
+                    'filename' => basename((string)$config['filename']),
+                    'template_id' => $templateId,
+                    'batch_id' => $batchId,
+                    'rows' => count($rows),
+                    'valid_rows' => $stats['valid_rows'],
+                    'error_rows' => $stats['error_rows'],
+                    'matched_rows' => $stats['matched_rows'],
+                    'unmatched_rows' => $stats['unmatched_rows'],
+                    'suspicious_hour_rows' => $stats['suspicious_hour_rows'],
+                    'total_mismatch_rows' => $stats['total_mismatch_rows'],
+                    'preview_hours' => round($stats['preview_hours'], 2),
+                    'canonical_write' => 'blocked_staging_only',
+                ];
+            }
+            $this->db->commit();
+
+            return [
+                'success' => 1,
+                'source_context' => self::SOURCE_CONTEXT,
+                'results' => $results,
+            ];
+        } catch (\Throwable $error) {
+            if ($this->db && $this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            error_log('Selected DTR sample validation failed: ' . $error->getMessage());
             return ['success' => 0, 'error' => self::GENERIC_ERROR];
         }
     }
@@ -495,7 +573,7 @@ class RealSampleAdapter
             }
         }
 
-        return array_slice($rows, 0, 1000);
+        return $this->enforcePreviewRowLimit($rows);
     }
 
     private function buildSummaryRows(array $config, array $matrix): array
@@ -554,7 +632,7 @@ class RealSampleAdapter
             );
         }
 
-        return array_slice($rows, 0, 1000);
+        return $this->enforcePreviewRowLimit($rows);
     }
 
     private function buildRawPunchRows(array $config, array $matrix): array
@@ -649,7 +727,17 @@ class RealSampleAdapter
             );
         }
 
-        return array_slice($rows, 0, 1000);
+        return $this->enforcePreviewRowLimit($rows);
+    }
+
+    private function enforcePreviewRowLimit(array $rows): array
+    {
+        if (count($rows) > 1000) {
+            throw new RuntimeException(
+                'The sample preview exceeds the governed 1,000-row limit; no preview rows were staged.'
+            );
+        }
+        return $rows;
     }
 
     private function adapterRow(
@@ -723,15 +811,44 @@ class RealSampleAdapter
             }
         }
 
+        $checksum = hash_file('sha256', $path);
+        $configurationHash = hash('sha256', json_encode($config, JSON_UNESCAPED_SLASHES));
+        $idempotencyKey = hash('sha256', implode('|', [
+            (int)($config['client_id'] ?? 0),
+            strtoupper((string)$config['key']),
+            $configurationHash,
+            $checksum,
+            (string)$config['period_start'],
+            (string)$config['period_end'],
+        ]));
+        $existing = $this->db->prepare(
+            'SELECT id FROM dtr_upload_batches WHERE upload_idempotency_key = :idempotency_key LIMIT 1'
+        );
+        $existing->execute([':idempotency_key' => $idempotencyKey]);
+        $existingId = (int)$existing->fetchColumn();
+        if ($existingId > 0) {
+            return $existingId;
+        }
+
         $batchUid = 'REAL10-' . date('YmdHis') . '-' . bin2hex(random_bytes(3));
         $batch = $this->db->prepare("
             INSERT INTO dtr_upload_batches (
                 batch_uid,
                 template_id,
+                client_id,
+                location_id,
+                adapter_key,
+                adapter_version,
+                adapter_config_hash,
+                identity_policy,
                 original_filename,
                 uploaded_by,
                 checksum,
+                upload_idempotency_key,
                 row_count,
+                accepted_row_count,
+                rejected_row_count,
+                was_truncated,
                 validation_status,
                 error_count,
                 processing_status,
@@ -740,10 +857,20 @@ class RealSampleAdapter
             ) VALUES (
                 :batch_uid,
                 :template_id,
+                :client_id,
+                :location_id,
+                :adapter_key,
+                :adapter_version,
+                :adapter_config_hash,
+                'approved_mapping_required',
                 :original_filename,
                 :uploaded_by,
                 :checksum,
+                :upload_idempotency_key,
                 :row_count,
+                :accepted_row_count,
+                :rejected_row_count,
+                0,
                 :validation_status,
                 :error_count,
                 'configurable_adapter_preview',
@@ -754,10 +881,18 @@ class RealSampleAdapter
         $batch->execute([
             ':batch_uid' => $batchUid,
             ':template_id' => $templateId,
+            ':client_id' => (int)($config['client_id'] ?? 0) ?: null,
+            ':location_id' => (int)($config['location_id'] ?? 0) ?: null,
+            ':adapter_key' => strtoupper((string)$config['key']),
+            ':adapter_version' => 'preview-20260727',
+            ':adapter_config_hash' => $configurationHash,
             ':original_filename' => basename($config['filename']),
             ':uploaded_by' => $user,
-            ':checksum' => hash_file('sha256', $path),
+            ':checksum' => $checksum,
+            ':upload_idempotency_key' => $idempotencyKey,
             ':row_count' => count($rows),
+            ':accepted_row_count' => count($rows) - $errorCount,
+            ':rejected_row_count' => $errorCount,
             ':validation_status' => $errorCount > 0 ? 'warning' : 'passed',
             ':error_count' => $errorCount,
             ':source_context' => self::SOURCE_CONTEXT,
@@ -1114,7 +1249,10 @@ class RealSampleAdapter
         if (in_array('alias_manual_mapping', $rules, true)) {
             foreach ([$identifier, $name, $this->nameKey($name)] as $sourceKey) {
                 if ($sourceKey !== '' && isset($aliases[$sourceKey])) {
-                    $employee = $this->findEmployeeByExactIdentifier((string)$aliases[$sourceKey]);
+                    $employee = $this->findEmployeeByExactIdentifier(
+                        (string)$aliases[$sourceKey],
+                        (int)($config['client_id'] ?? 0)
+                    );
                     if ($employee) {
                         return ['employee' => $employee, 'rule' => 'alias_manual_mapping'];
                     }
@@ -1123,7 +1261,10 @@ class RealSampleAdapter
         }
 
         if (in_array('exact_employee_id', $rules, true) && trim($identifier) !== '') {
-            $employee = $this->findEmployeeByExactIdentifier($identifier);
+            $employee = $this->findEmployeeByExactIdentifier(
+                $identifier,
+                (int)($config['client_id'] ?? 0)
+            );
             if ($employee) {
                 return ['employee' => $employee, 'rule' => 'exact_employee_id'];
             }
@@ -1132,7 +1273,10 @@ class RealSampleAdapter
         if (in_array('normalized_employee_id', $rules, true) && trim($identifier) !== '') {
             $normalized = $this->employeeIdKey($identifier);
             if ($normalized !== '' && $normalized !== trim($identifier)) {
-                $employee = $this->findEmployeeByExactIdentifier($normalized);
+                $employee = $this->findEmployeeByExactIdentifier(
+                    $normalized,
+                    (int)($config['client_id'] ?? 0)
+                );
                 if ($employee) {
                     return ['employee' => $employee, 'rule' => 'normalized_employee_id'];
                 }
@@ -1140,7 +1284,7 @@ class RealSampleAdapter
         }
 
         if (in_array('employee_name_fallback', $rules, true) && trim($name) !== '') {
-            $employee = $this->findEmployeeByName($name);
+            $employee = $this->findEmployeeByName($name, (int)($config['client_id'] ?? 0));
             if ($employee) {
                 return ['employee' => $employee, 'rule' => 'employee_name_fallback'];
             }
@@ -1149,28 +1293,40 @@ class RealSampleAdapter
         return ['employee' => null, 'rule' => 'unmatched'];
     }
 
-    private function findEmployeeByExactIdentifier(string $identifier): ?array
+    private function findEmployeeByExactIdentifier(string $identifier, int $clientId = 0): ?array
     {
         $identifier = trim($identifier);
         if ($identifier === '') {
             return null;
         }
 
+        $scopeSql = $clientId > 0 ? ' AND client_id = :client_id' : '';
         $stmt = $this->db->prepare("
             SELECT employee_id, payroll_employee_id, old_employee_id, full_name, client_id, client_location_id
             FROM employee_list
-            WHERE CAST(employee_id AS CHAR) = :identifier
-               OR payroll_employee_id = :identifier
-               OR old_employee_id = :identifier
+            WHERE (
+                CAST(employee_id AS CHAR) = :identifier_a
+                OR payroll_employee_id = :identifier_b
+                OR old_employee_id = :identifier_c
+            )
+            {$scopeSql}
             LIMIT 1
         ");
-        $stmt->execute([':identifier' => $identifier]);
+        $params = [
+            ':identifier_a' => $identifier,
+            ':identifier_b' => $identifier,
+            ':identifier_c' => $identifier,
+        ];
+        if ($clientId > 0) {
+            $params[':client_id'] = $clientId;
+        }
+        $stmt->execute($params);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return $row ?: null;
     }
 
-    private function findEmployeeByName(string $name): ?array
+    private function findEmployeeByName(string $name, int $clientId = 0): ?array
     {
         $keys = $this->nameKeys($name);
         if (count($keys) === 0) {
@@ -1178,13 +1334,19 @@ class RealSampleAdapter
         }
 
         $placeholders = implode(',', array_fill(0, count($keys), '?'));
+        $scopeSql = $clientId > 0 ? ' AND client_id = ?' : '';
         $stmt = $this->db->prepare("
             SELECT employee_id, payroll_employee_id, old_employee_id, full_name, client_id, client_location_id
             FROM employee_list
             WHERE REPLACE(REPLACE(REPLACE(UPPER(full_name), ',', ''), '.', ''), ' ', '') IN ($placeholders)
+            {$scopeSql}
             LIMIT 2
         ");
-        $stmt->execute($keys);
+        $params = $keys;
+        if ($clientId > 0) {
+            $params[] = $clientId;
+        }
+        $stmt->execute($params);
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         return count($rows) === 1 ? $rows[0] : null;
@@ -1466,7 +1628,15 @@ class RealSampleAdapter
 
     private function samplePath(string $filename): string
     {
-        return dirname(__DIR__, 3) . DIRECTORY_SEPARATOR . 'Sample Data' . DIRECTORY_SEPARATOR . $filename;
+        foreach ([dirname(__DIR__, 4), dirname(__DIR__, 3)] as $workspaceRoot) {
+            $candidate = $workspaceRoot . DIRECTORY_SEPARATOR . 'Sample Data'
+                . DIRECTORY_SEPARATOR . $filename;
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+        return dirname(__DIR__, 4) . DIRECTORY_SEPARATOR . 'Sample Data'
+            . DIRECTORY_SEPARATOR . $filename;
     }
 
     private function samplePathForConfig(array $config): string
@@ -1481,7 +1651,8 @@ class RealSampleAdapter
 
     private function sampleConfigs(): array
     {
-        $configPath = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'adapter_profiles.json';
+        $configPath = $this->profile_config_path
+            ?: dirname(__DIR__) . DIRECTORY_SEPARATOR . 'config' . DIRECTORY_SEPARATOR . 'adapter_profiles.json';
         if (!is_file($configPath)) {
             throw new RuntimeException('Adapter profile configuration is missing.');
         }

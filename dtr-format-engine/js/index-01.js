@@ -12,6 +12,14 @@ var dtrSmartResolutionRows = [];
 var dtrSmartResolutionSafeCount = 0;
 var dtrCurrentPayrollImportRunId = 0;
 var dtrRequestedBatchAutoLoaded = false;
+var dtrPopulationExceptions = [];
+var dtrPopulationOpenCount = 0;
+var dtrPopulationGateLoaded = false;
+var dtrSmartUnresolvedCount = 0;
+var dtrSmartIdentityReady = false;
+var dtrPopulationRequestSequence = 0;
+var dtrAdapterProfiles = [];
+var dtrApprovedAdapterProfiles = [];
 
 $(document).ready(function () {
     resetTemplateForm();
@@ -19,11 +27,11 @@ $(document).ready(function () {
     applyDtrEngineRoleCapabilities();
     loadLookups();
     loadTemplates();
+    loadAdapterRegistry();
     loadBatches();
     loadAdapterApprovalWorkflow();
     loadAdapterPreviewWorkflow();
     loadPayrollBasisPreview();
-    loadIdentityExceptions();
     loadIdentityNotifications(true);
     dtrIdentityNotificationTimer = window.setInterval(function () {
         loadIdentityNotifications(false);
@@ -64,9 +72,22 @@ function bindDtrEngineEvents() {
         uploadSyntheticPreview();
     });
 
-    $('#fujiSummaryUploadForm').on('submit', function (event) {
+    $('#realDtrUploadForm').on('submit', function (event) {
         event.preventDefault();
-        uploadFujiSummary();
+        uploadRealDtr();
+    });
+
+    $('#realDtrClientId').on('change', function () {
+        renderApprovedAdapterOptions();
+    });
+
+    $('#adapterProfileForm').on('submit', function (event) {
+        event.preventDefault();
+        createAdapterProfile();
+    });
+
+    $('#approveAdapterProfileBtn').on('click', function () {
+        approveAdapterProfile();
     });
 
     $('#analyzeSmartCohortBtn').on('click', function () {
@@ -77,8 +98,9 @@ function bindDtrEngineEvents() {
         var batchId = Number($(this).val() || 0);
         if (batchId > 0) {
             $('#identityBatchFilter').val(String(batchId));
-            loadSmartEmployeeResolution(batchId);
+            loadPayrollPopulationExceptions(batchId);
             loadIdentityExceptions(batchId);
+            loadSmartEmployeeResolution(batchId);
         }
     });
 
@@ -149,12 +171,34 @@ function bindDtrEngineEvents() {
     });
 
     $('#identityBatchFilter').on('change', function () {
-        $('#smartBatchFilter').val(String($(this).val() || 0));
+        var batchId = Number($(this).val() || 0);
+        $('#smartBatchFilter').val(String(batchId));
         loadIdentityExceptions();
+        loadPayrollPopulationExceptions(batchId);
+    });
+
+    $('#refreshPopulationExceptionsBtn').on('click', function () {
+        loadPayrollPopulationExceptions();
+    });
+
+    $('#notifyPopulationOwnersBtn').on('click', function () {
+        syncPayrollPopulationNotification();
+    });
+
+    $('#populationExceptionsTable').on('click', '.resolve-population-exception', function () {
+        openPopulationResolution(Number($(this).data('id')));
+    });
+
+    $('#resolvePopulationExceptionBtn').on('click', function () {
+        resolvePayrollPopulationException();
     });
 
     $('#syncIdentityBatchBtn').on('click', function () {
         syncSelectedIdentityBatch();
+    });
+
+    $('#exportIdentityDecisionPacketBtn').on('click', function () {
+        exportIdentityDecisionPacket();
     });
 
     $('#identityExceptionsTable').on('click', '.resolve-identity-exception', function () {
@@ -212,6 +256,9 @@ function renderLookupOptions() {
     $('#clientId').html('<option value="">Any client</option>' + dtrEngineLookups.clients.map(function (client) {
         return '<option value="' + escapeHtml(client.client_id) + '">' + escapeHtml(client.client_name) + '</option>';
     }).join(''));
+    $('#realDtrClientId').html('<option value="">Select client</option>' + dtrEngineLookups.clients.map(function (client) {
+        return '<option value="' + escapeHtml(client.client_id) + '">' + escapeHtml(client.client_name) + '</option>';
+    }).join(''));
 
     $('#locationId').html('<option value="">Any site</option>' + dtrEngineLookups.locations.map(function (location) {
         return '<option value="' + escapeHtml(location.location_id) + '">' + escapeHtml(location.location_name) + '</option>';
@@ -255,6 +302,7 @@ function loadTemplates() {
 function renderTemplates(templates) {
     $('#templateCount').text(templates.length);
     renderSyntheticTemplateOptions(templates);
+    renderAdapterTemplateOptions(templates);
 
     if (!templates.length) {
         $('#templatesTable tbody').html('<tr><td colspan="7" class="text-center text-muted">No templates configured.</td></tr>');
@@ -283,6 +331,18 @@ function renderTemplates(templates) {
             + '</td>'
             + '</tr>';
     }).join(''));
+}
+
+function renderAdapterTemplateOptions(templates) {
+    var options = '<option value="">Select client template</option>';
+    templates.forEach(function (template) {
+        if (Number(template.is_active) === 1 && Number(template.client_id || 0) > 0) {
+            options += '<option value="' + escapeHtml(template.id) + '">'
+                + escapeHtml(template.client_name || 'Client') + ' — '
+                + escapeHtml(template.template_name) + '</option>';
+        }
+    });
+    $('#adapterTemplateId').html(options);
 }
 
 function renderSyntheticTemplateOptions(templates) {
@@ -321,11 +381,11 @@ function renderBatches(batches) {
     var selectedSmartBatch = String($('#smartBatchFilter').val() || selectedBatch || '0');
     var requestedBatchRaw = new URLSearchParams(window.location.search).get('identity_batch');
     var requestedBatch = /^\d+$/.test(String(requestedBatchRaw || '')) ? String(Number(requestedBatchRaw)) : '';
-    var batchOptions = '<option value="0">All staged batches</option>' + batches.map(function (batch) {
+    var batchOptions = '<option value="0">Select a staged batch</option>' + batches.map(function (batch) {
         return '<option value="' + escapeHtml(batch.id) + '">' + escapeHtml(batch.batch_uid + ' - ' + batch.original_filename) + '</option>';
     }).join('');
     $('#identityBatchFilter').html(batchOptions);
-    $('#smartBatchFilter').html(batchOptions.replace('All staged batches', 'Select a staged batch'));
+    $('#smartBatchFilter').html(batchOptions);
     if (requestedBatch && $('#identityBatchFilter option[value="' + requestedBatch + '"]').length) {
         $('#identityBatchFilter').val(requestedBatch);
     } else if ($('#identityBatchFilter option[value="' + selectedBatch.replace(/"/g, '') + '"]').length) {
@@ -343,8 +403,10 @@ function renderBatches(batches) {
     if (requestedBatch && !dtrRequestedBatchAutoLoaded
         && $('#smartBatchFilter option[value="' + requestedBatch + '"]').length) {
         dtrRequestedBatchAutoLoaded = true;
-        loadSmartEmployeeResolution(Number(requestedBatch));
+        loadPayrollPopulationExceptions(Number(requestedBatch));
         loadIdentityExceptions(Number(requestedBatch));
+        loadSmartEmployeeResolution(Number(requestedBatch));
+        loadLatestPayrollImportRun(Number(requestedBatch));
     }
 
     if (!batches.length) {
@@ -518,14 +580,14 @@ function uploadSyntheticPreview() {
     });
 }
 
-function uploadFujiSummary() {
-    var form = $('#fujiSummaryUploadForm')[0];
+function uploadRealDtr() {
+    var form = $('#realDtrUploadForm')[0];
     var formData = new FormData(form);
-    formData.append('request', 'upload-fuji-summary');
+    formData.append('request', 'upload-real-dtr');
     formData.append('csrf_token', $('#csrf_token').val());
-    $('#stageFujiSummaryBtn').prop('disabled', true).text('Staging...');
-    $('#fujiSummaryUploadStatus').removeClass('alert-danger alert-success').addClass('alert-info')
-        .text('Reading the complete Fuji summary and building the HRIS resolution queue...').show();
+    $('#stageRealDtrBtn').prop('disabled', true).text('Staging...');
+    $('#realDtrUploadStatus').removeClass('alert-danger alert-success').addClass('alert-info')
+        .text('Validating the approved format, reconciling every row, and building the employee resolution queue...').show();
 
     $.ajax({
         url: 'controller/TemplateController.php',
@@ -536,16 +598,19 @@ function uploadFujiSummary() {
         contentType: false,
         success: function (response) {
             if (!response || response.success !== 1 || !response.identity_gate || response.identity_gate.success !== 1) {
-                $('#fujiSummaryUploadStatus').removeClass('alert-info alert-success').addClass('alert-danger')
-                    .text(response && response.error ? response.error : 'Unable to stage the Fuji workbook.');
+                $('#realDtrUploadStatus').removeClass('alert-info alert-success').addClass('alert-danger')
+                    .text(response && response.error ? response.error : 'Unable to stage the DTR file.');
                 return;
             }
             var summary = response.summary || {};
             var gate = response.identity_gate || {};
-            $('#fujiSummaryUploadStatus').removeClass('alert-info alert-danger').addClass('alert-success')
+            var match = response.adapter_match || {};
+            $('#realDtrUploadStatus').removeClass('alert-info alert-danger').addClass('alert-success')
                 .text('Batch ' + String(gate.batch_uid || response.batch_id)
-                    + ' staged ' + String(summary.row_count || 0)
-                    + ' employees. Payroll gate: ' + String(gate.gate_status || 'blocked')
+                    + ' staged all ' + String(summary.row_count || 0) + ' rows using '
+                    + String(match.adapter_key || summary.adapter_key || 'approved adapter')
+                    + ' ' + String(match.adapter_version || summary.adapter_version || '')
+                    + '. Payroll gate: ' + String(gate.gate_status || 'blocked')
                     + ' (' + String(gate.open_p0_count || 0) + ' unresolved).');
             loadBatches();
             loadIdentityExceptions(response.batch_id);
@@ -555,11 +620,183 @@ function uploadFujiSummary() {
             window.location.hash = 'smart-employee-resolution';
         },
         error: function () {
-            $('#fujiSummaryUploadStatus').removeClass('alert-info alert-success').addClass('alert-danger')
-                .text('Unable to stage the Fuji workbook.');
+            $('#realDtrUploadStatus').removeClass('alert-info alert-success').addClass('alert-danger')
+                .text('Unable to stage the DTR file.');
         },
         complete: function () {
-            $('#stageFujiSummaryBtn').prop('disabled', false).text('Stage');
+            $('#stageRealDtrBtn').prop('disabled', false).html('<i class="bx bx-upload me-1"></i>Stage for review');
+        }
+    });
+}
+
+function loadAdapterRegistry() {
+    if (!$('#adapterEffectiveFrom').val()) {
+        $('#adapterEffectiveFrom').val(new Date().toISOString().slice(0, 10));
+    }
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: { request: 'adapter-profiles' },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showDtrEngineError(response && response.error ? response.error : 'Unable to load the DTR adapter registry.');
+                return;
+            }
+            dtrAdapterProfiles = response.data || [];
+            renderAdapterRegistry();
+            loadApprovedAdapterProfiles();
+        },
+        error: function () {
+            showDtrEngineError('Unable to load the DTR adapter registry.');
+        }
+    });
+}
+
+function loadApprovedAdapterProfiles() {
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: { request: 'approved-adapter-profiles' },
+        success: function (response) {
+            dtrApprovedAdapterProfiles = response && response.success === 1 ? (response.data || []) : [];
+            renderApprovedAdapterOptions();
+        },
+        error: function () {
+            dtrApprovedAdapterProfiles = [];
+            renderApprovedAdapterOptions();
+        }
+    });
+}
+
+function renderApprovedAdapterOptions() {
+    var clientId = Number($('#realDtrClientId').val() || 0);
+    var profiles = dtrApprovedAdapterProfiles.filter(function (profile) {
+        return Number(profile.client_id) === clientId;
+    });
+    var options = clientId > 0
+        ? '<option value="">Auto-detect approved format</option>'
+        : '<option value="">Select client first</option>';
+    profiles.forEach(function (profile) {
+        options += '<option value="' + escapeHtml(profile.id) + '">'
+            + escapeHtml(profile.display_name) + ' · '
+            + escapeHtml(profile.adapter_version) + ' · '
+            + escapeHtml(String(profile.file_type || '').toUpperCase())
+            + '</option>';
+    });
+    if (clientId > 0 && profiles.length === 0) {
+        options = '<option value="">No approved format for this client</option>';
+    }
+    $('#realDtrAdapterProfileId').html(options).prop('disabled', clientId <= 0 || profiles.length === 0);
+}
+
+function renderAdapterRegistry() {
+    var drafts = dtrAdapterProfiles.filter(function (profile) {
+        return profile.profile_status === 'draft';
+    });
+    var draftOptions = '<option value="">Select draft</option>' + drafts.map(function (profile) {
+        return '<option value="' + escapeHtml(profile.id) + '">'
+            + escapeHtml(profile.client_name) + ' — '
+            + escapeHtml(profile.display_name) + ' ' + escapeHtml(profile.adapter_version)
+            + '</option>';
+    }).join('');
+    $('#adapterApprovalProfileId').html(draftOptions);
+
+    if (!dtrAdapterProfiles.length) {
+        $('#adapterRegistryTable tbody').html(
+            '<tr><td colspan="7" class="text-center text-muted">No governed adapter versions yet.</td></tr>'
+        );
+        return;
+    }
+    $('#adapterRegistryTable tbody').html(dtrAdapterProfiles.map(function (profile) {
+        var badge = profile.profile_status === 'approved'
+            ? 'bg-label-success'
+            : (profile.profile_status === 'retired' ? 'bg-label-secondary' : 'bg-label-warning');
+        var effective = profile.effective_from + (profile.effective_to ? ' to ' + profile.effective_to : ' onward');
+        return '<tr>'
+            + '<td>' + escapeHtml(profile.client_name) + '</td>'
+            + '<td>' + escapeHtml(profile.display_name) + '</td>'
+            + '<td>' + escapeHtml(profile.adapter_version) + '</td>'
+            + '<td>' + escapeHtml(profile.parser_key) + '</td>'
+            + '<td>' + escapeHtml(profile.identity_policy) + '</td>'
+            + '<td>' + escapeHtml(effective) + '</td>'
+            + '<td><span class="badge ' + badge + '">' + escapeHtml(profile.profile_status) + '</span></td>'
+            + '</tr>';
+    }).join(''));
+}
+
+function createAdapterProfile() {
+    var data = {};
+    $('#adapterProfileForm').serializeArray().forEach(function (field) {
+        data[field.name] = field.value;
+    });
+    data.request = 'create-adapter-profile';
+    data.csrf_token = $('#csrf_token').val();
+    $('#createAdapterProfileBtn').prop('disabled', true).text('Creating...');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: data,
+        success: function (response) {
+            var success = response && response.success === 1;
+            $('#adapterRegistryStatus')
+                .removeClass('alert-danger alert-success')
+                .addClass(success ? 'alert-success' : 'alert-danger')
+                .text(success ? response.message : (response && response.error ? response.error : 'Unable to create the adapter draft.'))
+                .show();
+            if (success) {
+                loadAdapterRegistry();
+            }
+        },
+        error: function () {
+            $('#adapterRegistryStatus').removeClass('alert-success').addClass('alert-danger')
+                .text('Unable to create the adapter draft.').show();
+        },
+        complete: function () {
+            $('#createAdapterProfileBtn').prop('disabled', false).text('Create draft');
+        }
+    });
+}
+
+function approveAdapterProfile() {
+    var profileId = Number($('#adapterApprovalProfileId').val() || 0);
+    var reason = String($('#adapterApprovalReason').val() || '').trim();
+    if (profileId <= 0 || !reason) {
+        $('#adapterRegistryStatus').removeClass('alert-success').addClass('alert-danger')
+            .text('Select a draft and enter approval evidence.').show();
+        return;
+    }
+    $('#approveAdapterProfileBtn').prop('disabled', true).text('Approving...');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            request: 'approve-adapter-profile',
+            profile_id: profileId,
+            approval_reason: reason,
+            csrf_token: $('#csrf_token').val()
+        },
+        success: function (response) {
+            var success = response && response.success === 1;
+            $('#adapterRegistryStatus')
+                .removeClass('alert-danger alert-success')
+                .addClass(success ? 'alert-success' : 'alert-danger')
+                .text(success ? 'Adapter approved and available for effective client uploads.' : (response && response.error ? response.error : 'Unable to approve the adapter.'))
+                .show();
+            if (success) {
+                $('#adapterApprovalReason').val('');
+                loadAdapterRegistry();
+            }
+        },
+        error: function () {
+            $('#adapterRegistryStatus').removeClass('alert-success').addClass('alert-danger')
+                .text('Unable to approve the adapter.').show();
+        },
+        complete: function () {
+            $('#approveAdapterProfileBtn').prop('disabled', false).text('Approve');
         }
     });
 }
@@ -1156,9 +1393,11 @@ function loadSmartEmployeeResolution(batchOverride) {
     if (batchId <= 0) {
         dtrSmartResolutionRows = [];
         dtrSmartResolutionSafeCount = 0;
-        $('#smartSourceCount, #smartSafeCount, #smartReviewCount, #smartBlockCount, #smartCollisionCount').text('-');
+        dtrSmartUnresolvedCount = 0;
+        dtrSmartIdentityReady = false;
+        $('#smartSourceCount, #smartApprovedCount, #smartSafeCount, #smartReviewCount, #smartBlockCount, #smartCollisionCount').text('-');
         $('#approveSmartCohortBtn').prop('disabled', true);
-        $('#createPayrollImportRunBtn').prop('disabled', true);
+        updateCreatePayrollRunAvailability();
         renderPayrollImportRun(null, null);
         $('#smartResolutionTable tbody').html('<tr><td colspan="4" class="text-center text-muted">Select and analyze a staged batch.</td></tr>');
         $('#smartResolutionTableSummary').text('');
@@ -1192,6 +1431,7 @@ function loadSmartEmployeeResolution(batchOverride) {
             var counts = preview.classification_counts || {};
             dtrSmartResolutionSafeCount = Number(counts.auto_eligible_shadow || 0);
             $('#smartSourceCount').text(Number(preview.unique_source_count || preview.total_sources || 0));
+            $('#smartApprovedCount').text(Number(counts.approved || 0));
             $('#smartSafeCount').text(dtrSmartResolutionSafeCount);
             $('#smartReviewCount').text(Number(counts.review || 0));
             $('#smartBlockCount').text(Number(counts.block || 0));
@@ -1200,12 +1440,15 @@ function loadSmartEmployeeResolution(batchOverride) {
             var unresolved = Number(counts.review || 0) + Number(counts.block || 0);
             var batch = response.batch || {};
             var identityReady = batch.validation_status === 'passed' && batch.processing_status === 'identity_ready';
-            $('#createPayrollImportRunBtn').prop('disabled', unresolved > 0 || !identityReady);
+            dtrSmartUnresolvedCount = unresolved;
+            dtrSmartIdentityReady = identityReady;
+            updateCreatePayrollRunAvailability();
             $('#smartResolutionStatus')
                 .removeClass('alert-info alert-danger alert-success alert-warning')
                 .addClass(unresolved > 0 ? 'alert-warning' : 'alert-success')
                 .text(
-                    dtrSmartResolutionSafeCount + ' collision-free shadow matches are eligible for explicit owner approval. '
+                    Number(counts.approved || 0) + ' mappings are owner-approved. '
+                    + dtrSmartResolutionSafeCount + ' collision-free shadow matches are eligible for explicit owner approval. '
                     + unresolved + ' employees remain in review or hard-blocked. Engine ' + String(response.engine_version || '') + '.'
                 );
             renderSmartResolutionRows();
@@ -1249,12 +1492,14 @@ function renderSmartResolutionRows() {
         }).slice(0, 4);
         var contradictionCodes = (row.contradictions || []).slice(0, 3);
         var evidence = evidenceCodes.concat(contradictionCodes).join(', ') || row.classification_reason || 'No evidence';
-        var badge = row.classification === 'auto_eligible_shadow'
+        var badge = row.classification === 'approved' || row.classification === 'auto_eligible_shadow'
             ? 'bg-label-success'
             : (row.classification === 'review' ? 'bg-label-warning' : 'bg-label-danger');
-        var label = row.classification === 'auto_eligible_shadow'
-            ? 'Safe shadow'
-            : (row.classification === 'review' ? 'Owner review' : 'Blocked');
+        var label = row.classification === 'approved'
+            ? 'Approved'
+            : (row.classification === 'auto_eligible_shadow'
+                ? 'Safe shadow'
+                : (row.classification === 'review' ? 'Owner review' : 'Blocked'));
         return '<tr>'
             + '<td>' + source + '</td>'
             + '<td>' + target + '</td>'
@@ -1393,7 +1638,7 @@ function renderPayrollImportRun(run, gate) {
         $('#payrollImportRunUid').text('Not created');
         $('#payrollImportRunState, #payrollImportRulesState, #payrollImportReleaseState').text('-');
         $('#payrollImportRunStatus').removeClass('alert-danger alert-success').addClass('alert-warning')
-            .text('Resolve every identity first. A versioned statutory/loan ruleset and exact Fuji reconciliation are still required before approval or payslip release.');
+            .text('Resolve every identity first. The client-approved statutory, loan, and payroll ruleset plus exact gold-file reconciliation are still required before approval or payslip release.');
         return;
     }
     dtrCurrentPayrollImportRunId = Number(run.id);
@@ -1414,6 +1659,16 @@ function renderPayrollImportRun(run, gate) {
 
 function loadIdentityExceptions(batchOverride) {
     var batchId = Number(batchOverride || $('#identityBatchFilter').val() || 0);
+    if (batchId <= 0) {
+        dtrIdentityExceptions = [];
+        $('#exportIdentityDecisionPacketBtn').prop('disabled', true);
+        $('#identityGateStatus').text('Select a staged batch').removeClass('text-danger text-success');
+        $('#identityMissingCount, #identityReviewCount, #identityConflictCount').text('0');
+        $('#identityGateAlert').hide();
+        $('#identityExceptionsTable tbody').html('<tr><td colspan="6" class="text-center text-muted">Select one staged batch to review employee identity exceptions.</td></tr>');
+        $('#identityExceptionTableSummary').text('');
+        return;
+    }
     $.ajax({
         url: 'controller/TemplateController.php',
         type: 'GET',
@@ -1429,6 +1684,8 @@ function loadIdentityExceptions(batchOverride) {
                 return;
             }
             dtrIdentityExceptions = response.data || [];
+            $('#exportIdentityDecisionPacketBtn').prop('disabled', dtrIdentityExceptions.length === 0);
+            $('#dtrEngineAlert').hide();
             renderIdentityExceptions(dtrIdentityExceptions);
             renderIdentityGate(response.summary || {});
         },
@@ -1436,6 +1693,68 @@ function loadIdentityExceptions(batchOverride) {
             showDtrEngineError('Unable to load employee identity exceptions.');
         }
     });
+}
+
+function exportIdentityDecisionPacket() {
+    if (!dtrIdentityExceptions.length) {
+        showDtrEngineError('There are no unresolved employee identity exceptions to export.');
+        return;
+    }
+    var recommendation = function (code) {
+        if (code === 'MISSING_HRIS_EMPLOYEE') {
+            return 'Create or locate the HRIS employee, confirm the correct client assignment, then validate again';
+        }
+        if (code === 'HRIS_STATUS_CONFLICT') {
+            return 'Confirm employment status and effective dates for this payroll period';
+        }
+        return 'Confirm or reject the suggested HRIS match using employee master evidence';
+    };
+    var csvCell = function (value) {
+        var text = String(value == null ? '' : value);
+        if (/^[=+\-@]/.test(text)) {
+            text = "'" + text;
+        }
+        return '"' + text.replace(/"/g, '""') + '"';
+    };
+    var headers = [
+        'Batch UID',
+        'Source row',
+        'DTR source employee ID',
+        'DTR employee name',
+        'Exception code',
+        'Suggested HRIS employee ID',
+        'Suggested HRIS employee name',
+        'Client',
+        'Recommended HR action',
+        'Owner decision',
+        'Owner reason'
+    ];
+    var lines = [headers.map(csvCell).join(',')];
+    dtrIdentityExceptions.forEach(function (row) {
+        lines.push([
+            row.batch_uid,
+            row.source_row_number,
+            row.source_employee_id,
+            row.source_employee_name,
+            row.exception_code,
+            row.suggested_employee_id,
+            row.suggested_employee_name,
+            row.client_name,
+            recommendation(String(row.exception_code || '')),
+            '',
+            ''
+        ].map(csvCell).join(','));
+    });
+    var batchId = Number($('#identityBatchFilter').val() || 0);
+    var blob = new Blob(['\uFEFF' + lines.join('\r\n')], {type: 'text/csv;charset=utf-8'});
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = 'employee-identity-decision-packet-batch-' + batchId + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 }
 
 function renderIdentityExceptions(rows) {
@@ -1472,6 +1791,14 @@ function renderIdentityExceptions(rows) {
                 + '<br><small class="text-muted">Employee ID ' + escapeHtml(row.suggested_employee_id) + '</small>'
             : '<span class="text-muted">No confident candidate</span>';
         var codeLabel = identityExceptionLabel(row.exception_code);
+        var createEmployeeUrl = '../employee-management/?from_identity_exception=1'
+            + '&source_employee_id=' + encodeURIComponent(row.source_employee_id || '')
+            + '&source_employee_name=' + encodeURIComponent(row.source_employee_name || '')
+            + '&client_id=' + encodeURIComponent(row.client_id || '')
+            + '&client_name=' + encodeURIComponent(row.client_name || '');
+        var createEmployeeAction = String(row.exception_code || '') === 'MISSING_HRIS_EMPLOYEE'
+            ? '<a class="btn btn-sm btn-outline-primary ms-1" href="' + escapeHtml(createEmployeeUrl) + '">Create employee</a>'
+            : '';
         return '<tr>'
             + '<td><strong>' + escapeHtml(row.batch_uid) + '</strong><br><small class="text-muted">Row ' + escapeHtml(row.source_row_number) + '</small></td>'
             + '<td>' + source + '</td>'
@@ -1480,10 +1807,239 @@ function renderIdentityExceptions(rows) {
             + '<td><span class="badge bg-label-warning">' + escapeHtml(row.status) + '</span></td>'
             + '<td class="text-nowrap">'
             + '<button type="button" class="btn btn-sm btn-primary resolve-identity-exception" data-id="' + escapeHtml(row.id) + '">Resolve</button>'
+            + createEmployeeAction
             + '</td>'
             + '</tr>';
     }).join(''));
     $('#identityExceptionTableSummary').text('Showing ' + shown.length + ' of ' + filtered.length + ' matching unresolved exceptions.');
+}
+
+function updateCreatePayrollRunAvailability() {
+    var blocked = !dtrSmartIdentityReady
+        || dtrSmartUnresolvedCount > 0
+        || !dtrPopulationGateLoaded
+        || dtrPopulationOpenCount > 0;
+    $('#createPayrollImportRunBtn').prop('disabled', blocked);
+}
+
+function loadPayrollPopulationExceptions(batchOverride) {
+    var batchId = Number(batchOverride || $('#smartBatchFilter').val() || $('#identityBatchFilter').val() || 0);
+    var requestSequence = ++dtrPopulationRequestSequence;
+    dtrPopulationGateLoaded = false;
+    dtrPopulationOpenCount = 0;
+    updateCreatePayrollRunAvailability();
+    if (batchId <= 0) {
+        dtrPopulationExceptions = [];
+        $('#populationOpenCount, #populationResolvedCount').text('0');
+        $('#populationGateStatus').text('Select a staged batch').removeClass('text-danger text-success');
+        $('#populationGateAlert').removeClass('alert-danger alert-warning alert-success').addClass('alert-info')
+            .text('Select a staged client batch above to review payslip-only employees. These records do not create or alter employee, DTR, payroll, loan, deduction, or payslip data.');
+        $('#populationExceptionsTable tbody').html('<tr><td colspan="5" class="text-center text-muted">No population exceptions loaded.</td></tr>');
+        $('#populationExceptionTableSummary').text('');
+        return;
+    }
+
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: {
+            request: 'payroll-population-exceptions',
+            batch_id: batchId,
+            status: 'all'
+        },
+        success: function (response) {
+            if (requestSequence !== dtrPopulationRequestSequence) {
+                return;
+            }
+            if (!response || response.success !== 1) {
+                $('#populationGateStatus').text('Unavailable').addClass('text-danger');
+                $('#populationGateAlert').removeClass('alert-info alert-warning alert-success').addClass('alert-danger')
+                    .text(response && response.error ? response.error : 'Unable to load DTR and payslip population exceptions.');
+                return;
+            }
+            dtrPopulationExceptions = response.data || [];
+            var summary = response.summary || {};
+            dtrPopulationOpenCount = Number(summary.open || 0);
+            dtrPopulationGateLoaded = true;
+            renderPayrollPopulationExceptions(dtrPopulationExceptions, summary);
+            updateCreatePayrollRunAvailability();
+        },
+        error: function () {
+            if (requestSequence !== dtrPopulationRequestSequence) {
+                return;
+            }
+            $('#populationGateStatus').text('Unavailable').addClass('text-danger');
+            $('#populationGateAlert').removeClass('alert-info alert-warning alert-success').addClass('alert-danger')
+                .text('Unable to load DTR and payslip population exceptions.');
+        }
+    });
+}
+
+function renderPayrollPopulationExceptions(rows, summary) {
+    var openCount = Number(summary.open || 0);
+    var resolvedCount = Number(summary.resolved || 0);
+    $('#populationOpenCount').text(openCount);
+    $('#populationResolvedCount').text(resolvedCount);
+    $('#populationGateStatus')
+        .text(openCount > 0 ? 'Blocked — ' + openCount + ' P0' : 'Ready')
+        .toggleClass('text-danger', openCount > 0)
+        .toggleClass('text-success', openCount === 0);
+    $('#populationGateAlert')
+        .removeClass('alert-info alert-danger alert-warning alert-success')
+        .addClass(openCount > 0 ? 'alert-warning' : 'alert-success')
+        .text(openCount > 0
+            ? 'Canonical payroll remains blocked until every payslip-only employee has an evidence-backed owner disposition.'
+            : 'The DTR and expected payslip populations have no unresolved P0 exceptions.');
+
+    if (!rows.length) {
+        $('#populationExceptionsTable tbody').html('<tr><td colspan="5" class="text-center text-muted">No DTR-to-payslip population exceptions for this batch.</td></tr>');
+        $('#populationExceptionTableSummary').text('0 population exceptions.');
+        return;
+    }
+
+    $('#populationExceptionsTable tbody').html(rows.map(function (row) {
+        var evidence = row.evidence || {};
+        var evidenceParts = [];
+        if (evidence.pay_date) evidenceParts.push('Pay date ' + evidence.pay_date);
+        if (evidence.pdf_page) evidenceParts.push('PDF page ' + evidence.pdf_page);
+        if (evidence.gross_pay != null) evidenceParts.push('Gross ' + Number(evidence.gross_pay).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        if (evidence.net_pay != null) evidenceParts.push('Net ' + Number(evidence.net_pay).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        var employeeName = [row.last_name, row.first_name].filter(Boolean).join(', ');
+        var employee = row.matched_employee_id
+            ? '<strong>' + escapeHtml(employeeName || 'HRIS employee') + '</strong>'
+                + '<br><small class="text-muted">Employee ID ' + escapeHtml(row.matched_employee_id)
+                + (row.payroll_employee_id ? ' · Payroll ID ' + escapeHtml(row.payroll_employee_id) : '') + '</small>'
+            : '<span class="text-muted">No HRIS match recorded</span>';
+        var status = row.status === 'open'
+            ? '<span class="badge bg-label-danger">Open P0</span>'
+            : '<span class="badge bg-label-success">Resolved</span><br><small>' + escapeHtml(populationDispositionLabel(row.disposition)) + '</small>';
+        var action = row.status === 'open'
+            ? '<button type="button" class="btn btn-sm btn-primary resolve-population-exception" data-id="' + escapeHtml(row.id) + '">Resolve</button>'
+            : '<span class="text-muted">Recorded by ' + escapeHtml(row.resolved_by || 'owner') + '</span>';
+        return '<tr>'
+            + '<td><strong>' + escapeHtml(row.reference_employee_name) + '</strong><br><small class="text-muted">Payslip without current DTR</small></td>'
+            + '<td>' + employee + '</td>'
+            + '<td><small>' + escapeHtml(evidenceParts.join(' · ') || 'Reference evidence attached') + '</small></td>'
+            + '<td>' + status + '</td>'
+            + '<td>' + action + '</td>'
+            + '</tr>';
+    }).join(''));
+    $('#populationExceptionTableSummary').text(
+        rows.length + ' population exceptions shown: ' + openCount + ' open and ' + resolvedCount + ' resolved.'
+    );
+}
+
+function syncPayrollPopulationNotification() {
+    var batchId = Number($('#smartBatchFilter').val() || $('#identityBatchFilter').val() || 0);
+    if (batchId <= 0) {
+        showDtrEngineError('Select the staged DTR batch before notifying HR and Payroll.');
+        return;
+    }
+    $('#notifyPopulationOwnersBtn').prop('disabled', true);
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            request: 'sync-population-notification',
+            batch_id: batchId,
+            csrf_token: $('#csrf_token').val()
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showDtrEngineError(response && response.error
+                    ? response.error
+                    : 'Unable to notify HR and Payroll.');
+                return;
+            }
+            $('#dtrEngineAlert').removeClass('alert-danger').addClass('alert-success')
+                .text(response.open_p0_count > 0
+                    ? 'HR, Payroll, and Admin owners were notified of ' + response.open_p0_count + ' open population blocker(s).'
+                    : 'Owners were notified that the DTR and payslip population gate is resolved.')
+                .show();
+            loadIdentityNotifications(true);
+        },
+        error: function () {
+            showDtrEngineError('Unable to notify HR and Payroll.');
+        },
+        complete: function () {
+            $('#notifyPopulationOwnersBtn').prop('disabled', false);
+        }
+    });
+}
+
+function openPopulationResolution(exceptionId) {
+    var exception = dtrPopulationExceptions.find(function (row) {
+        return Number(row.id) === Number(exceptionId);
+    });
+    if (!exception || exception.status !== 'open') {
+        showDtrEngineError('The selected population exception is no longer open.');
+        return;
+    }
+    $('#populationExceptionId').val(exception.id);
+    $('#populationResolutionSource').html(
+        '<strong>' + escapeHtml(exception.reference_employee_name) + '</strong>'
+        + '<br>Matched HRIS employee ID: ' + escapeHtml(exception.matched_employee_id || 'not recorded')
+        + '<br><small class="text-muted">Payslip without a current DTR row. Select only an outcome supported by owner evidence.</small>'
+    );
+    $('#populationResolutionDisposition').val('');
+    $('#populationResolutionReason').val('');
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('populationResolutionModal')).show();
+}
+
+function resolvePayrollPopulationException() {
+    var exceptionId = Number($('#populationExceptionId').val() || 0);
+    var disposition = String($('#populationResolutionDisposition').val() || '');
+    var reason = String($('#populationResolutionReason').val() || '').trim();
+    if (exceptionId <= 0 || !disposition) {
+        showDtrEngineError('Select a supported population disposition.');
+        return;
+    }
+    if (reason.length < 20) {
+        showDtrEngineError('Enter an evidence-backed owner reason of at least 20 characters.');
+        return;
+    }
+    $('#resolvePopulationExceptionBtn').prop('disabled', true);
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: {
+            request: 'resolve-population-exception',
+            exception_id: exceptionId,
+            disposition: disposition,
+            reason: reason,
+            csrf_token: $('#csrf_token').val()
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showDtrEngineError(response && response.error ? response.error : 'Unable to record the population disposition.');
+                return;
+            }
+            $('#dtrEngineAlert').hide();
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('populationResolutionModal')).hide();
+            var batchId = Number($('#smartBatchFilter').val() || $('#identityBatchFilter').val() || 0);
+            loadPayrollPopulationExceptions(batchId);
+            loadLatestPayrollImportRun(batchId);
+        },
+        error: function () {
+            showDtrEngineError('Unable to record the population disposition.');
+        },
+        complete: function () {
+            $('#resolvePopulationExceptionBtn').prop('disabled', false);
+        }
+    });
+}
+
+function populationDispositionLabel(disposition) {
+    var labels = {
+        dtr_added_to_superseding_batch: 'DTR added to superseding batch',
+        approved_off_cycle: 'Approved off-cycle payroll',
+        approved_adjustment: 'Approved adjustment payroll',
+        reference_exclusion: 'Reference exclusion'
+    };
+    return labels[disposition] || disposition || 'Resolved';
 }
 
 function renderIdentityGate(summary) {
@@ -1738,6 +2294,15 @@ function addMappingRow(field) {
         + option('time', 'Time', field.data_type || 'text')
         + option('number', 'Number', field.data_type || 'text')
         + '</select></td>'
+        + '<td><select class="form-select form-select-sm mapping-transform">'
+        + option('', 'None', field.transform_rule || '')
+        + option('uppercase', 'Uppercase', field.transform_rule || '')
+        + option('lowercase', 'Lowercase', field.transform_rule || '')
+        + option('remove_spaces', 'Remove spaces', field.transform_rule || '')
+        + option('collapse_spaces', 'Collapse spaces', field.transform_rule || '')
+        + option('digits_only', 'Digits only', field.transform_rule || '')
+        + option('strip_commas', 'Strip commas', field.transform_rule || '')
+        + '</select></td>'
         + '<td class="text-center"><input type="checkbox" class="form-check-input mapping-required" ' + (Number(field.is_required) === 1 ? 'checked' : '') + ' /></td>'
         + '<td><button type="button" class="btn btn-sm btn-outline-secondary remove-mapping-row"><i class="bx bx-x"></i></button></td>'
         + '</tr>';
@@ -1751,6 +2316,7 @@ function collectMappingRows() {
             source_header: $(this).find('.mapping-source').val(),
             canonical_field: $(this).find('.mapping-canonical').val(),
             data_type: $(this).find('.mapping-type').val(),
+            transform_rule: $(this).find('.mapping-transform').val(),
             is_required: $(this).find('.mapping-required').is(':checked') ? 1 : 0,
             sort_order: index + 1
         });
@@ -1783,7 +2349,7 @@ function applyDtrEngineRoleCapabilities() {
     if (canConfigure) {
         return;
     }
-    $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input')
+    $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input, #adapterProfileForm :input, #adapterApprovalProfileId, #adapterApprovalReason, #approveAdapterProfileBtn')
         .prop('disabled', true);
     $('#saveTemplateBtn').text('Admin configuration only');
 }

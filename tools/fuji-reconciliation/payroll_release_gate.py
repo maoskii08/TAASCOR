@@ -19,6 +19,8 @@ EXPECTED_TO_ACTUAL = {
     "expected_pagibig": "pagibig",
     "expected_tax": "withholding_tax",
     "expected_other_deductions": "other_deductions",
+    "expected_attendance_deduction": "attendance_deduction",
+    "expected_printed_total_deductions": "printed_total_deductions",
     "expected_total_deductions": "total_deductions",
     "expected_taxable": "taxable",
     "expected_net_pay": "net_pay",
@@ -136,7 +138,19 @@ def compare_release(
         try:
             gross = money(actual_row.get("gross"))
             deductions = money(actual_row.get("total_deductions"))
+            printed_deductions = money(actual_row.get("printed_total_deductions"))
+            attendance_deduction = money(actual_row.get("attendance_deduction"))
             net_pay = money(actual_row.get("net_pay"))
+            if money(printed_deductions + attendance_deduction) != deductions:
+                blockers.append(
+                    {
+                        "code": "DEDUCTION_TOTAL_EQUATION_MISMATCH",
+                        "source_id": source_id,
+                        "printed_total_deductions": str(printed_deductions),
+                        "attendance_deduction": str(attendance_deduction),
+                        "total_deductions": str(deductions),
+                    }
+                )
             if money(gross - deductions) != net_pay:
                 blockers.append(
                     {

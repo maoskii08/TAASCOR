@@ -994,6 +994,9 @@ class PayrollImportRunManager
         if ((int)($facts['identity_collision_count'] ?? 0) > 0) {
             $blockers[] = 'identity_collisions';
         }
+        if ((int)($facts['open_population_exception_count'] ?? 0) > 0) {
+            $blockers[] = 'open_population_exceptions';
+        }
         if ((int)($facts['validation_error_count'] ?? 0) > 0) {
             $blockers[] = 'validation_errors';
         }
@@ -1054,9 +1057,12 @@ class PayrollImportRunManager
 
     private function loadBatch(int $batchId, bool $forUpdate): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT b.*, t.client_id, t.template_name, t.source_type\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE b.id = :id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
+        $stmt = $this->db->prepare("\n            SELECT b.*,\n+                   COALESCE(b.client_id, t.client_id) AS client_id,\n+                   COALESCE(b.location_id, t.location_id) AS location_id,\n+                   t.template_name, t.source_type\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            WHERE b.id = :id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '') . "\n        ");
         $stmt->execute([':id' => $batchId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        if ($row && (int)($row['is_synthetic'] ?? 0) === 1) {
+            $row['identity_policy'] = 'trusted_hris_identifier';
+        }
         return $row ?: null;
     }
 
@@ -1090,15 +1096,19 @@ class PayrollImportRunManager
         $exceptions = $this->db->prepare("\n            SELECT COUNT(*) FROM dtr_employee_exceptions\n            WHERE batch_id = :batch_id AND severity = 'P0' AND status = 'open'\n        ");
         $exceptions->execute([':batch_id' => $batchId]);
         $openP0 = (int)$exceptions->fetchColumn();
+        $population = $this->db->prepare("\n            SELECT COUNT(*) FROM payroll_population_exceptions\n            WHERE batch_id = :batch_id AND severity = 'P0' AND status = 'open'\n        ");
+        $population->execute([':batch_id' => $batchId]);
+        $openPopulation = (int)$population->fetchColumn();
         $invalid = $this->db->prepare("\n            SELECT COUNT(*) FROM dtr_upload_staging_rows\n            WHERE batch_id = :batch_id AND validation_status NOT IN ('valid', 'excluded')\n        ");
         $invalid->execute([':batch_id' => $batchId]);
         $invalidRows = (int)$invalid->fetchColumn();
         $batchReady = (string)($batch['validation_status'] ?? '') === 'passed'
             && (string)($batch['processing_status'] ?? '') === 'identity_ready';
         return [
-            'ready' => $batchReady && $openP0 === 0 && $invalidRows === 0,
+            'ready' => $batchReady && $openP0 === 0 && $openPopulation === 0 && $invalidRows === 0,
             'batch_status_ready' => $batchReady,
             'open_p0_count' => $openP0,
+            'open_population_exception_count' => $openPopulation,
             'invalid_row_count' => $invalidRows,
         ];
     }
@@ -1451,12 +1461,11 @@ class PayrollImportRunManager
             return ['status' => 'collision', 'reason' => 'multiple_legacy_maps'];
         }
 
-        $sourceType = strtolower(trim((string)($batch['source_type'] ?? '')));
-        $sourceContext = strtolower(trim((string)($batch['source_context'] ?? '')));
-        if ($sourceType === 'fuji_payroll_summary' || $sourceContext === 'fuji_payroll_summary') {
+        if ((string)($batch['identity_policy'] ?? 'approved_mapping_required')
+            !== 'trusted_hris_identifier') {
             return [
                 'status' => 'unresolved',
-                'reason' => 'approved_identity_mapping_required_for_fuji_vendor_id',
+                'reason' => 'approved_identity_mapping_required_by_adapter_policy',
             ];
         }
 
@@ -1615,6 +1624,8 @@ class PayrollImportRunManager
             }
         }
         $coverage = $this->artifactCoverage((int)$run['id']);
+        $population = $this->db->prepare("\n            SELECT COUNT(*) FROM payroll_population_exceptions\n            WHERE batch_id = :batch_id AND severity = 'P0' AND status = 'open'\n        ");
+        $population->execute([':batch_id' => (int)$run['source_batch_id']]);
         return [
             'run_status' => (string)$run['status'],
             'identity_status' => (string)$run['identity_status'],
@@ -1623,6 +1634,7 @@ class PayrollImportRunManager
             'reconciliation_status' => (string)$run['reconciliation_status'],
             'unresolved_identity_count' => (int)$run['unresolved_identity_count'],
             'identity_collision_count' => (int)$run['identity_collision_count'],
+            'open_population_exception_count' => (int)$population->fetchColumn(),
             'validation_error_count' => (int)$run['validation_error_count'],
             'employee_count' => (int)$run['employee_count'],
             'verified_artifact_count' => (int)$coverage['verified_artifact_count'],

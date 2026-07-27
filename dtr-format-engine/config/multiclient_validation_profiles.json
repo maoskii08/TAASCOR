@@ -1,0 +1,274 @@
+{
+  "version": "2026-07-27",
+  "scope": "local-staging-validation-only",
+  "profiles": [
+    {
+      "key": "DELTA",
+      "profile_name": "DELTA Payroll Summary",
+      "template_name": "Validation Profile - DELTA Payroll Summary",
+      "filename": "DELTA TIMEKEEP 2026(7).xlsx",
+      "file_type": "xlsx",
+      "workbook_type": "summary_period",
+      "mode": "summary_period",
+      "sheet_selector": "MAY 16-31, 2026",
+      "header_row": "15-16",
+      "data_start_row": 18,
+      "employee_identifier_label": "Name of Employees",
+      "columns": {
+        "employee_identifier": 2,
+        "employee_name": 2,
+        "area": 0,
+        "worked_days": 3
+      },
+      "date_day_column_range": {
+        "start_col": 0,
+        "count": 0
+      },
+      "period_start": "2026-05-16",
+      "period_end": "2026-05-31",
+      "client_id": 0,
+      "location_id": 0,
+      "ignored_rows": [],
+      "footer_detection_rules": [
+        "TOTAL",
+        "GRAND TOTAL",
+        "#REF!"
+      ],
+      "totals_description": "Worked days and minute totals are cross-checked when both are present.",
+      "remarks_status_fields": "Leave, deduction, overtime, night differential, holiday, and comment columns.",
+      "employee_matching": {
+        "enabled_rules": [
+          "exact_employee_id",
+          "normalized_employee_id",
+          "employee_name_fallback",
+          "alias_manual_mapping"
+        ],
+        "alias_map": []
+      },
+      "status_dictionary": {
+        "numeric_zero_category": "absent",
+        "codes": {
+          "VL": {
+            "category": "leave",
+            "blocking": true
+          },
+          "A": {
+            "category": "absent",
+            "blocking": true
+          },
+          "-": {
+            "category": "blank",
+            "skip": true
+          }
+        }
+      },
+      "summary_conversion": {
+        "hours_per_worked_day": 8,
+        "basis": "worked_days_summary_preview_only"
+      },
+      "preview_safety": {
+        "max_summary_hours_per_row": 96,
+        "max_worked_days_per_period": 12,
+        "max_profile_preview_hours": 1000
+      },
+      "total_validation": {
+        "enabled": true,
+        "source_col": 5,
+        "unit": "minutes",
+        "tolerance": 0.01
+      },
+      "headers": [
+        "Name of Employees",
+        "days",
+        "minutes",
+        "late",
+        "UNDERTIME",
+        "Regular OT",
+        "REG ND",
+        "Special holiday",
+        "DEDUCTION"
+      ],
+      "fields": [
+        {
+          "source_header": "Name of Employees",
+          "canonical_field": "employee_name",
+          "data_type": "text",
+          "is_required": 1
+        },
+        {
+          "source_header": "days",
+          "canonical_field": "hours_worked",
+          "data_type": "number",
+          "is_required": 1
+        },
+        {
+          "source_header": "minutes",
+          "canonical_field": "hours_worked",
+          "data_type": "number",
+          "is_required": 0
+        }
+      ],
+      "owner_decision_checklist": [
+        "Confirm whether the worked-days summary is an approved payroll basis.",
+        "Confirm how late, undertime, overtime, night differential, rest-day, and holiday fields should be mapped."
+      ],
+      "adapter_hardening_notes": [
+        "Summary hours are diagnostic only.",
+        "Client-scoped identity and owner approval remain required."
+      ]
+    },
+    {
+      "key": "TK_BI_CANG",
+      "profile_name": "BI-CANG Raw Punch Validation",
+      "template_name": "Validation Profile - BI-CANG Raw Punch",
+      "filename": "TK BI-CANG MAY 16 - 31, 2026.xlsx",
+      "file_type": "xlsx",
+      "workbook_type": "raw_punch_log",
+      "mode": "raw_punch",
+      "sheet_selector": "TK MAY 16 - 31",
+      "header_row": "1-2",
+      "data_start_row": 2,
+      "employee_identifier_label": "DINGTALK ID",
+      "columns": {
+        "employee_identifier": 1,
+        "employee_name": 2,
+        "area": 0,
+        "worked_days": 4,
+        "work_date": 3,
+        "time_in": 5,
+        "time_out": 6
+      },
+      "date_day_column_range": {
+        "start_col": 7,
+        "count": 1
+      },
+      "period_start": "2026-05-16",
+      "period_end": "2026-05-31",
+      "client_id": 0,
+      "location_id": 0,
+      "ignored_rows": [],
+      "footer_detection_rules": [
+        "TOTAL",
+        "GRAND TOTAL",
+        "SUBTOTAL",
+        "SUMMARY",
+        "PREPARED BY",
+        "CHECKED BY",
+        "APPROVED BY",
+        "#REF!"
+      ],
+      "totals_description": "Raw date, time-in, and time-out rows are validated independently.",
+      "remarks_status_fields": "Schedule/status and late/undertime columns.",
+      "employee_matching": {
+        "enabled_rules": [
+          "exact_employee_id",
+          "normalized_employee_id",
+          "employee_name_fallback",
+          "alias_manual_mapping"
+        ],
+        "alias_map": []
+      },
+      "status_dictionary": {
+        "numeric_zero_category": "absent",
+        "codes": {
+          "P": {
+            "category": "present_worked",
+            "blocking": false,
+            "default_hours": 8
+          },
+          "A": {
+            "category": "absent",
+            "blocking": true
+          },
+          "RD": {
+            "category": "rest_day",
+            "blocking": true
+          },
+          "RH": {
+            "category": "holiday",
+            "blocking": true
+          },
+          "VL": {
+            "category": "leave",
+            "blocking": true
+          },
+          "SL": {
+            "category": "leave",
+            "blocking": true
+          },
+          "-": {
+            "category": "blank",
+            "skip": true
+          }
+        }
+      },
+      "summary_conversion": {
+        "hours_per_worked_day": 8,
+        "basis": "raw_time_in_out_preview_only"
+      },
+      "preview_safety": {
+        "max_daily_hours_per_row": 16,
+        "max_summary_hours_per_row": 128,
+        "max_worked_days_per_period": 16,
+        "max_profile_preview_hours": 2000
+      },
+      "total_validation": {
+        "enabled": false,
+        "reason": "Raw-punch totals remain blocked until the client confirms schedule and overnight-shift rules."
+      },
+      "headers": [
+        "DINGTALK ID",
+        "EMPLOYEE NAME",
+        "Date",
+        "IN",
+        "OUT",
+        "#Days",
+        "Late/UT",
+        "Reg OT",
+        "Reg ND",
+        "Reg NDOT"
+      ],
+      "fields": [
+        {
+          "source_header": "DINGTALK ID",
+          "canonical_field": "employee_id",
+          "data_type": "text",
+          "is_required": 1
+        },
+        {
+          "source_header": "EMPLOYEE NAME",
+          "canonical_field": "employee_name",
+          "data_type": "text",
+          "is_required": 0
+        },
+        {
+          "source_header": "Date",
+          "canonical_field": "work_date",
+          "data_type": "date",
+          "is_required": 1
+        },
+        {
+          "source_header": "IN",
+          "canonical_field": "time_in",
+          "data_type": "time",
+          "is_required": 1
+        },
+        {
+          "source_header": "OUT",
+          "canonical_field": "time_out",
+          "data_type": "time",
+          "is_required": 1
+        }
+      ],
+      "owner_decision_checklist": [
+        "Confirm DINGTALK identifier ownership and client-scoped aliases.",
+        "Confirm date, time-in, time-out, overnight shift, and incomplete-punch rules.",
+        "Confirm schedule/status meanings before payroll handoff."
+      ],
+      "adapter_hardening_notes": [
+        "Incomplete punches remain blocked.",
+        "Client-scoped identity and owner approval remain required."
+      ]
+    }
+  ]
+}

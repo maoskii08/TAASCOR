@@ -96,6 +96,15 @@ resolution_check(
         && strpos((string)json_encode($aliasBatch['cohort_preview']), 'Ana') === false,
     'safe cohort preview excludes row-level candidates and names'
 );
+$approvedPreview = $engine->buildSafeCohortPreview([[
+    'classification' => 'approved',
+    'contradictions' => [],
+]]);
+resolution_check(
+    (int)$approvedPreview['classification_counts']['approved'] === 1
+        && (int)$approvedPreview['classification_counts']['block'] === 0,
+    'owner-approved mappings remain distinct from unresolved hard blocks in cohort summaries'
+);
 
 $identifierBatch = $engine->resolveBatch(
     [[
@@ -283,6 +292,37 @@ resolution_check(
 resolution_check(
     resolution_result($priorityBatch, 'fuzzy-loser')['classification'] === 'block',
     'weaker source contesting an approved target is blocked'
+);
+
+$compositePriorityBatch = $engine->resolveBatch(
+    [
+        [
+            'source_key' => 'composite-winner',
+            'employee_name' => 'Santos, Andrea',
+            'hire_date' => '2024-03-18',
+        ],
+        [
+            'source_key' => 'similarity-loser',
+            'employee_name' => 'Santos, Angela',
+            'hire_date' => '2026-06-22',
+        ],
+    ],
+    [resolution_employee(271, 10, [
+        'first_name' => 'Andrea',
+        'last_name' => 'Santos',
+        'full_name' => 'Andrea Santos',
+        'hire_date' => '2024-03-18',
+    ])],
+    [],
+    resolution_context()
+);
+resolution_check(
+    resolution_result($compositePriorityBatch, 'composite-winner')['classification'] === 'auto_eligible_shadow',
+    'exact-name and exact-hire-date evidence retains the target over weaker name similarity'
+);
+resolution_check(
+    resolution_result($compositePriorityBatch, 'similarity-loser')['classification'] === 'block',
+    'weaker name similarity remains blocked after the stronger composite reservation wins'
 );
 
 $financialFieldsA = [

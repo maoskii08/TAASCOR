@@ -4,12 +4,16 @@ class FujiPayrollSummaryAdapter
 {
     public $db = null;
 
-    private const CLIENT_ID = 264;
+    public const CLIENT_ID = 264;
     private const SOURCE_CONTEXT = 'fuji_payroll_summary';
     private const TEMPLATE_NAME = 'Fujifilm Payroll Summary';
     private const MAX_UPLOAD_BYTES = 5242880;
+    private const MAX_ARCHIVE_ENTRIES = 2000;
+    private const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 67108864;
+    private const MAX_ARCHIVE_ENTRY_BYTES = 16777216;
+    private const MAX_COMPRESSION_RATIO = 200;
 
-    public function stageUpload(array $post, array $file, string $user): array
+    public function stageUpload(array $post, array $file, string $user, ?array $profile = null): array
     {
         try {
             $fileCheck = $this->validateFile($file);
@@ -46,8 +50,20 @@ class FujiPayrollSummaryAdapter
             }
 
             $templateId = $this->ensureTemplate($user);
+            if ($profile !== null
+                && ((int)($profile['client_id'] ?? 0) !== self::CLIENT_ID
+                    || (int)($profile['template_id'] ?? 0) !== $templateId
+                    || (string)($profile['identity_policy'] ?? '') !== 'approved_mapping_required')) {
+                return ['success' => 0, 'error' => 'The approved Fuji adapter binding is invalid.'];
+            }
             $checksum = hash_file('sha256', (string)$file['tmp_name']);
-            $existing = $this->existingBatch($checksum, $periodStart, $periodEnd, $payDate);
+            $existing = $this->existingBatch(
+                $checksum,
+                $periodStart,
+                $periodEnd,
+                $payDate,
+                $profile === null ? null : (int)$profile['id']
+            );
             if ($existing) {
                 return [
                     'success' => 1,
@@ -71,6 +87,8 @@ class FujiPayrollSummaryAdapter
                 $checksum,
                 $periodStart,
                 $periodEnd,
+                $payDate,
+                $profile,
                 $rows
             );
 
@@ -216,26 +234,83 @@ class FujiPayrollSummaryAdapter
         string $checksum,
         string $periodStart,
         string $periodEnd,
+        string $payDate,
+        ?array $profile,
         array $rows
     ): int {
+        if (count($rows) <= 0 || count($rows) > 2000) {
+            throw new RuntimeException('Fuji source row count is outside the governed intake limit.');
+        }
         $this->db->beginTransaction();
         try {
             $batchUid = 'FUJI-' . str_replace('-', '', $periodStart) . '-' . str_replace('-', '', $periodEnd)
                 . '-' . date('YmdHis') . '-' . bin2hex(random_bytes(3));
-            $batch = $this->db->prepare("\n                INSERT INTO dtr_upload_batches (\n                    batch_uid, template_id, original_filename, uploaded_by, checksum,\n                    row_count, validation_status, error_count, processing_status,\n                    is_synthetic, source_context\n                ) VALUES (\n                    :batch_uid, :template_id, :original_filename, :uploaded_by, :checksum,\n                    :row_count, 'blocked_employee_identity', :error_count, 'identity_review_required',\n                    0, :source_context\n                )\n            ");
+            $profileId = $profile === null ? null : (int)$profile['id'];
+            $adapterKey = $profile === null
+                ? 'FUJI_PAYROLL_SUMMARY'
+                : (string)$profile['adapter_key'];
+            $adapterVersion = $profile === null
+                ? 'legacy-pilot'
+                : (string)$profile['adapter_version'];
+            $adapterHash = $profile === null
+                ? null
+                : (string)$profile['configuration_hash'];
+            $idempotencyKey = hash('sha256', implode('|', [
+                self::CLIENT_ID,
+                $profileId ?: 0,
+                $adapterHash ?: 'legacy-pilot',
+                $checksum,
+                $periodStart,
+                $periodEnd,
+                $payDate,
+            ]));
+            $batch = $this->db->prepare("
+                INSERT INTO dtr_upload_batches (
+                    batch_uid, template_id, client_id, location_id,
+                    adapter_profile_id, adapter_key, adapter_version,
+                    adapter_config_hash, identity_policy,
+                    original_filename, uploaded_by, checksum, upload_idempotency_key,
+                    row_count, accepted_row_count, rejected_row_count, was_truncated,
+                    validation_status, error_count, processing_status,
+                    is_synthetic, source_context
+                ) VALUES (
+                    :batch_uid, :template_id, :client_id, NULL,
+                    :adapter_profile_id, :adapter_key, :adapter_version,
+                    :adapter_config_hash, 'approved_mapping_required',
+                    :original_filename, :uploaded_by, :checksum, :upload_idempotency_key,
+                    :row_count, 0, :rejected_row_count, 0,
+                    'blocked_employee_identity', :error_count, 'identity_review_required',
+                    0, :source_context
+                )
+            ");
             $batch->execute([
                 ':batch_uid' => $batchUid,
                 ':template_id' => $templateId,
+                ':client_id' => self::CLIENT_ID,
+                ':adapter_profile_id' => $profileId,
+                ':adapter_key' => $adapterKey,
+                ':adapter_version' => $adapterVersion,
+                ':adapter_config_hash' => $adapterHash,
                 ':original_filename' => $filename,
                 ':uploaded_by' => $user,
                 ':checksum' => $checksum,
+                ':upload_idempotency_key' => $idempotencyKey,
                 ':row_count' => count($rows),
+                ':rejected_row_count' => count($rows),
                 ':error_count' => count($rows),
                 ':source_context' => self::SOURCE_CONTEXT,
             ]);
             $batchId = (int)$this->db->lastInsertId();
 
-            $insert = $this->db->prepare("\n                INSERT INTO dtr_upload_staging_rows (\n                    batch_id, source_row_number, raw_payload, parsed_payload,\n                    validation_status, error_summary, is_synthetic\n                ) VALUES (\n                    :batch_id, :source_row_number, :raw_payload, :parsed_payload,\n                    :validation_status, :error_summary, 0\n                )\n            ");
+            $insert = $this->db->prepare("
+                INSERT INTO dtr_upload_staging_rows (
+                    batch_id, source_row_number, raw_payload, parsed_payload,
+                    validation_status, error_summary, is_synthetic
+                ) VALUES (
+                    :batch_id, :source_row_number, :raw_payload, :parsed_payload,
+                    :validation_status, :error_summary, 0
+                )
+            ");
             foreach ($rows as $row) {
                 $insert->execute([
                     ':batch_id' => $batchId,
@@ -245,6 +320,13 @@ class FujiPayrollSummaryAdapter
                     ':validation_status' => $row['validation_status'],
                     ':error_summary' => json_encode($row['errors']),
                 ]);
+            }
+            $count = $this->db->prepare(
+                'SELECT COUNT(*) FROM dtr_upload_staging_rows WHERE batch_id = :batch_id'
+            );
+            $count->execute([':batch_id' => $batchId]);
+            if ((int)$count->fetchColumn() !== count($rows)) {
+                throw new RuntimeException('Fuji staged row count does not match the source row count.');
             }
             $this->db->commit();
             return $batchId;
@@ -317,16 +399,41 @@ class FujiPayrollSummaryAdapter
         return $templateId;
     }
 
-    private function existingBatch(string $checksum, string $periodStart, string $periodEnd, string $payDate): ?array
-    {
-        $stmt = $this->db->prepare("\n            SELECT b.id, b.row_count,\n                   JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.pay_date')) AS pay_date\n            FROM dtr_upload_batches b\n            INNER JOIN dtr_upload_staging_rows r ON r.batch_id = b.id\n            WHERE b.source_context = :source_context\n              AND b.checksum = :checksum\n              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.period_start')) = :period_start\n              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.period_end')) = :period_end\n              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.pay_date')) = :pay_date\n            ORDER BY b.id DESC\n            LIMIT 1\n        ");
-        $stmt->execute([
+    private function existingBatch(
+        string $checksum,
+        string $periodStart,
+        string $periodEnd,
+        string $payDate,
+        ?int $profileId = null
+    ): ?array {
+        $profileFilter = $profileId === null
+            ? ''
+            : ' AND b.adapter_profile_id = :adapter_profile_id';
+        $stmt = $this->db->prepare("
+            SELECT b.id, b.row_count,
+                   JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.pay_date')) AS pay_date
+            FROM dtr_upload_batches b
+            INNER JOIN dtr_upload_staging_rows r ON r.batch_id = b.id
+            WHERE b.source_context = :source_context
+              AND b.checksum = :checksum
+              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.period_start')) = :period_start
+              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.period_end')) = :period_end
+              AND JSON_UNQUOTE(JSON_EXTRACT(r.parsed_payload, '$.pay_date')) = :pay_date
+              {$profileFilter}
+            ORDER BY b.id DESC
+            LIMIT 1
+        ");
+        $params = [
             ':source_context' => self::SOURCE_CONTEXT,
             ':checksum' => $checksum,
             ':period_start' => $periodStart,
             ':period_end' => $periodEnd,
             ':pay_date' => $payDate,
-        ]);
+        ];
+        if ($profileId !== null) {
+            $params[':adapter_profile_id'] = $profileId;
+        }
+        $stmt->execute($params);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
@@ -379,6 +486,12 @@ class FujiPayrollSummaryAdapter
             }
             return ['valid' => false, 'error' => 'The selected file is not a readable Excel workbook.'];
         }
+        try {
+            $this->validateArchive($zip);
+        } catch (RuntimeException $error) {
+            $zip->close();
+            return ['valid' => false, 'error' => $error->getMessage()];
+        }
         $zip->close();
         return ['valid' => true];
     }
@@ -390,17 +503,15 @@ class FujiPayrollSummaryAdapter
             throw new RuntimeException('Unable to open Fuji workbook.');
         }
         try {
+            $this->validateArchive($zip);
             $sheetTarget = $this->sheetTarget($zip, $sheetName);
             $sharedStrings = $this->sharedStrings($zip);
-            $sheetXml = $zip->getFromName($sheetTarget);
-            if ($sheetXml === false) {
-                throw new RuntimeException('Fuji worksheet is missing.');
-            }
+            $sheetXml = $this->safeZipEntry($zip, $sheetTarget, true);
         } finally {
             $zip->close();
         }
 
-        $xml = simplexml_load_string($sheetXml);
+        $xml = $this->parseXml($sheetXml, 'Fuji worksheet');
         if (!$xml || !isset($xml->sheetData->row)) {
             return [];
         }
@@ -428,8 +539,14 @@ class FujiPayrollSummaryAdapter
 
     private function sheetTarget(ZipArchive $zip, string $sheetName): string
     {
-        $workbook = simplexml_load_string((string)$zip->getFromName('xl/workbook.xml'));
-        $rels = simplexml_load_string((string)$zip->getFromName('xl/_rels/workbook.xml.rels'));
+        $workbook = $this->parseXml(
+            $this->safeZipEntry($zip, 'xl/workbook.xml', true),
+            'Fuji workbook metadata'
+        );
+        $rels = $this->parseXml(
+            $this->safeZipEntry($zip, 'xl/_rels/workbook.xml.rels', true),
+            'Fuji workbook relationships'
+        );
         if (!$workbook || !$rels) {
             throw new RuntimeException('Fuji workbook metadata is unreadable.');
         }
@@ -454,11 +571,11 @@ class FujiPayrollSummaryAdapter
 
     private function sharedStrings(ZipArchive $zip): array
     {
-        $raw = $zip->getFromName('xl/sharedStrings.xml');
-        if ($raw === false) {
+        $raw = $this->safeZipEntry($zip, 'xl/sharedStrings.xml', false);
+        if ($raw === null) {
             return [];
         }
-        $xml = simplexml_load_string($raw);
+        $xml = $this->parseXml($raw, 'Fuji shared strings');
         if (!$xml || !isset($xml->si)) {
             return [];
         }
@@ -471,6 +588,77 @@ class FujiPayrollSummaryAdapter
             $strings[] = trim(preg_replace('/\s+/', ' ', $value));
         }
         return $strings;
+    }
+
+    private function validateArchive(ZipArchive $zip): void
+    {
+        if ($zip->numFiles <= 0 || $zip->numFiles > self::MAX_ARCHIVE_ENTRIES) {
+            throw new RuntimeException('The workbook contains too many archive entries.');
+        }
+        $uncompressed = 0;
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $stat = $zip->statIndex($index);
+            if (!is_array($stat)) {
+                throw new RuntimeException('The workbook archive is unreadable.');
+            }
+            $name = str_replace('\\', '/', (string)($stat['name'] ?? ''));
+            if ($name === '' || str_starts_with($name, '/') || preg_match('#(^|/)\.\.(/|$)#', $name)) {
+                throw new RuntimeException('The workbook contains an unsafe archive path.');
+            }
+            $size = (int)($stat['size'] ?? 0);
+            $compressed = (int)($stat['comp_size'] ?? 0);
+            if ($size < 0 || $size > self::MAX_ARCHIVE_ENTRY_BYTES) {
+                throw new RuntimeException('The workbook contains an oversized XML entry.');
+            }
+            if ($compressed > 0 && $size / $compressed > self::MAX_COMPRESSION_RATIO) {
+                throw new RuntimeException('The workbook compression ratio is unsafe.');
+            }
+            $uncompressed += $size;
+            if ($uncompressed > self::MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+                throw new RuntimeException('The expanded workbook is too large.');
+            }
+        }
+    }
+
+    private function safeZipEntry(ZipArchive $zip, string $path, bool $required): ?string
+    {
+        $stat = $zip->statName($path);
+        if (!is_array($stat)) {
+            if ($required) {
+                throw new RuntimeException('The workbook is missing required content.');
+            }
+            return null;
+        }
+        if ((int)($stat['size'] ?? 0) > self::MAX_ARCHIVE_ENTRY_BYTES) {
+            throw new RuntimeException('The workbook contains an oversized XML entry.');
+        }
+        $value = $zip->getFromName($path);
+        if ($value === false) {
+            throw new RuntimeException('The workbook content could not be read.');
+        }
+        return $value;
+    }
+
+    private function parseXml(string $xml, string $label): SimpleXMLElement
+    {
+        if (preg_match('/<!DOCTYPE|<!ENTITY/i', $xml)) {
+            throw new RuntimeException($label . ' contains prohibited XML declarations.');
+        }
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $parsed = simplexml_load_string(
+                $xml,
+                SimpleXMLElement::class,
+                LIBXML_NONET | LIBXML_COMPACT
+            );
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+        if (!$parsed instanceof SimpleXMLElement) {
+            throw new RuntimeException($label . ' is unreadable.');
+        }
+        return $parsed;
     }
 
     private function periodFromMarker(string $marker): ?array

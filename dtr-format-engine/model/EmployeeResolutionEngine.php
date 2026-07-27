@@ -174,6 +174,7 @@ final class EmployeeResolutionEngine
         $policy = $this->policy($policyOverrides);
         $counts = [
             'auto_eligible_shadow' => 0,
+            'approved' => 0,
             'review' => 0,
             'block' => 0,
         ];
@@ -507,11 +508,11 @@ final class EmployeeResolutionEngine
             if ($isAlias) {
                 $score = 100.0;
                 $basis = 'approved_alias';
-                $priority = 3;
+                $priority = 4;
             } elseif ($isIdentifier) {
                 $score = 99.0;
                 $basis = 'exact_identifier';
-                $priority = 2;
+                $priority = 3;
             } else {
                 $score = $nameEvidence['score'] * 0.90;
                 if ($hireEvidence === 'exact') {
@@ -526,7 +527,7 @@ final class EmployeeResolutionEngine
                 }
                 $score = max(0.0, min(100.0, $score));
                 $basis = $hireEvidence === 'exact' ? 'name_and_exact_hire_date' : 'name_similarity';
-                $priority = 1;
+                $priority = $hireEvidence === 'exact' ? 2 : 1;
             }
 
             $candidate = [

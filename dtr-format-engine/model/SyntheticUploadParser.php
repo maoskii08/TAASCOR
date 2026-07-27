@@ -5,7 +5,14 @@ class SyntheticUploadParser
     public $db = null;
 
     private const MAX_UPLOAD_BYTES = 2097152;
+    private const MAX_REAL_UPLOAD_BYTES = 10485760;
+    private const MAX_REAL_ROWS = 5000;
+    private const MAX_ARCHIVE_ENTRIES = 2000;
+    private const MAX_ARCHIVE_UNCOMPRESSED_BYTES = 67108864;
+    private const MAX_ARCHIVE_ENTRY_BYTES = 16777216;
+    private const MAX_COMPRESSION_RATIO = 200;
     private const GENERIC_ERROR = 'Unable to process the synthetic DTR preview. Please contact your administrator.';
+    private const GENERIC_REAL_ERROR = 'Unable to stage the real DTR file. Please contact your administrator.';
 
     public function uploadSynthetic(array $post, array $file, string $user): array
     {
@@ -80,6 +87,172 @@ class SyntheticUploadParser
         }
     }
 
+    public function uploadReal(array $post, array $file, string $user, array $profile): array
+    {
+        try {
+            $periodStart = trim((string)($post['period_start'] ?? ''));
+            $periodEnd = trim((string)($post['period_end'] ?? ''));
+            $payDate = trim((string)($post['pay_date'] ?? ''));
+            if (!$this->validIsoDate($periodStart)
+                || !$this->validIsoDate($periodEnd)
+                || !$this->validIsoDate($payDate)
+                || $periodEnd < $periodStart) {
+                return ['success' => 0, 'error' => 'Enter a valid payroll period and pay date.'];
+            }
+
+            $configuration = $profile['configuration'] ?? null;
+            $template = is_array($configuration) ? ($configuration['template'] ?? null) : null;
+            if (!is_array($template)
+                || (int)($template['id'] ?? 0) !== (int)($profile['template_id'] ?? 0)
+                || (int)($template['client_id'] ?? 0) !== (int)($profile['client_id'] ?? 0)
+                || empty($template['fields'])) {
+                return ['success' => 0, 'error' => 'The approved adapter template snapshot is invalid.'];
+            }
+
+            $fileCheck = $this->validateUploadFile($file, false);
+            if (!$fileCheck['valid']) {
+                return ['success' => 0, 'error' => $fileCheck['error']];
+            }
+            if (strtolower((string)($profile['file_type'] ?? '')) !== $fileCheck['extension']) {
+                return ['success' => 0, 'error' => 'The uploaded file type does not match the approved adapter version.'];
+            }
+
+            $parsed = $this->parseFile(
+                (string)$file['tmp_name'],
+                $fileCheck['extension'],
+                self::MAX_REAL_ROWS,
+                false
+            );
+            if (!$parsed['success']) {
+                return $parsed;
+            }
+            if (count($parsed['rows']) === 0) {
+                return ['success' => 0, 'error' => 'The DTR file contains no data rows.'];
+            }
+
+            $headerValidation = $this->validateHeaders($parsed['headers'], $template['fields']);
+            if (!$headerValidation['success']) {
+                return [
+                    'success' => 0,
+                    'error' => 'The file headers do not match the approved adapter version.',
+                    'summary' => $headerValidation,
+                ];
+            }
+
+            $checksum = hash_file('sha256', (string)$file['tmp_name']);
+            $idempotencyKey = hash('sha256', implode('|', [
+                (int)$profile['client_id'],
+                (int)$profile['id'],
+                (string)$profile['configuration_hash'],
+                $checksum,
+                $periodStart,
+                $periodEnd,
+                $payDate,
+            ]));
+            $existing = $this->existingRealBatch($idempotencyKey);
+            if ($existing) {
+                return [
+                    'success' => 1,
+                    'batch_id' => (int)$existing['id'],
+                    'duplicate_upload' => true,
+                    'summary' => [
+                        'batch_id' => (int)$existing['id'],
+                        'filename' => (string)$existing['original_filename'],
+                        'row_count' => (int)$existing['row_count'],
+                        'valid_rows' => (int)$existing['accepted_row_count'],
+                        'error_rows' => (int)$existing['rejected_row_count'],
+                        'validation_status' => (string)$existing['validation_status'],
+                        'processing_status' => (string)$existing['processing_status'],
+                        'adapter_key' => (string)$profile['adapter_key'],
+                        'adapter_version' => (string)$profile['adapter_version'],
+                        'duplicate_upload' => true,
+                    ],
+                    'rows' => [],
+                ];
+            }
+
+            $identityPolicy = (string)($profile['identity_policy'] ?? 'approved_mapping_required');
+            $preview = $this->validateRows(
+                $parsed['headers'],
+                $parsed['rows'],
+                $template,
+                $periodStart,
+                $periodEnd,
+                $identityPolicy,
+                false,
+                [
+                    'pay_date' => $payDate,
+                    'source_adapter' => (string)$profile['adapter_key'],
+                    'source_context' => 'generic_real_dtr',
+                ]
+            );
+            $batchId = $this->stageReal(
+                $profile,
+                basename((string)$file['name']),
+                $user,
+                $checksum,
+                $idempotencyKey,
+                $preview
+            );
+
+            return [
+                'success' => 1,
+                'batch_id' => $batchId,
+                'duplicate_upload' => false,
+                'summary' => [
+                    'batch_id' => $batchId,
+                    'filename' => basename((string)$file['name']),
+                    'extension' => $fileCheck['extension'],
+                    'row_count' => count($parsed['rows']),
+                    'valid_rows' => $preview['valid_rows'],
+                    'error_rows' => $preview['error_rows'],
+                    'missing_required_headers' => [],
+                    'extra_unmapped_headers' => $headerValidation['extra_unmapped_headers'],
+                    'validation_status' => $preview['error_rows'] > 0 ? 'failed' : 'passed',
+                    'processing_status' => 'identity_review_required',
+                    'adapter_key' => (string)$profile['adapter_key'],
+                    'adapter_version' => (string)$profile['adapter_version'],
+                    'identity_policy' => $identityPolicy,
+                    'synthetic' => false,
+                    'canonical_write' => 'blocked_staging_only',
+                ],
+                'rows' => array_slice($preview['safe_rows'], 0, 300),
+            ];
+        } catch (Throwable $error) {
+            error_log('DTR governed real upload failed: ' . $error->getMessage());
+            return ['success' => 0, 'error' => self::GENERIC_REAL_ERROR];
+        }
+    }
+
+    public function inspectRealUpload(array $file): array
+    {
+        try {
+            $fileCheck = $this->validateUploadFile($file, false);
+            if (!$fileCheck['valid']) {
+                return ['success' => 0, 'error' => $fileCheck['error']];
+            }
+            $parsed = $this->parseFile(
+                (string)$file['tmp_name'],
+                (string)$fileCheck['extension'],
+                self::MAX_REAL_ROWS,
+                false
+            );
+            if (empty($parsed['success'])) {
+                return $parsed;
+            }
+            return [
+                'success' => 1,
+                'extension' => (string)$fileCheck['extension'],
+                'headers' => array_values($parsed['headers']),
+                'row_count' => count($parsed['rows']),
+                'was_truncated' => false,
+            ];
+        } catch (Throwable $error) {
+            error_log('DTR upload fingerprint inspection failed: ' . $error->getMessage());
+            return ['success' => 0, 'error' => self::GENERIC_REAL_ERROR];
+        }
+    }
+
     public function clearSyntheticBatches(): array
     {
         try {
@@ -147,7 +320,7 @@ class SyntheticUploadParser
                     b.uploaded_at,
                     t.template_name,
                     t.id AS template_id,
-                    t.client_id AS template_client_id
+                    COALESCE(b.client_id, t.client_id) AS template_client_id
                 FROM dtr_upload_staging_rows r
                 INNER JOIN dtr_upload_batches b ON b.id = r.batch_id
                 LEFT JOIN dtr_format_templates t ON t.id = b.template_id
@@ -328,62 +501,77 @@ class SyntheticUploadParser
         }
     }
 
-    private function validateUploadFile(array $file): array
+    private function validateUploadFile(array $file, bool $synthetic = true): array
     {
+        $label = $synthetic ? 'synthetic ' : '';
+        $maximumBytes = $synthetic ? self::MAX_UPLOAD_BYTES : self::MAX_REAL_UPLOAD_BYTES;
+        $maximumMegabytes = (int)($maximumBytes / 1048576);
         if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-            return ['valid' => false, 'error' => 'Select a synthetic CSV or XLSX test file.'];
+            return ['valid' => false, 'error' => 'Select a ' . $label . 'CSV or XLSX file.'];
         }
 
-        if ((int)($file['size'] ?? 0) <= 0 || (int)$file['size'] > self::MAX_UPLOAD_BYTES) {
-            return ['valid' => false, 'error' => 'Synthetic file size must be between 1 byte and 2 MB.'];
+        if ((int)($file['size'] ?? 0) <= 0 || (int)$file['size'] > $maximumBytes) {
+            return [
+                'valid' => false,
+                'error' => ucfirst($label) . "file size must be between 1 byte and {$maximumMegabytes} MB.",
+            ];
         }
 
         $extension = strtolower(pathinfo((string)($file['name'] ?? ''), PATHINFO_EXTENSION));
         if (!in_array($extension, ['csv', 'xlsx'], true)) {
-            return ['valid' => false, 'error' => 'Only synthetic CSV and XLSX files are supported.'];
+            return ['valid' => false, 'error' => 'Only ' . $label . 'CSV and XLSX files are supported.'];
         }
 
         if (!is_uploaded_file((string)$file['tmp_name'])) {
-            return ['valid' => false, 'error' => 'Synthetic file upload was not accepted.'];
+            return ['valid' => false, 'error' => ucfirst($label) . 'file upload was not accepted.'];
         }
 
         return ['valid' => true, 'extension' => $extension];
     }
 
-    private function parseFile(string $path, string $extension): array
+    private function parseFile(
+        string $path,
+        string $extension,
+        int $maximumRows = 500,
+        bool $synthetic = true
+    ): array
     {
         if ($extension === 'csv') {
-            return $this->parseCsv($path);
+            return $this->parseCsv($path, $maximumRows, $synthetic);
         }
         if ($extension === 'xlsx') {
-            return $this->parseXlsx($path);
+            return $this->parseXlsx($path, $maximumRows, $synthetic);
         }
 
-        return ['success' => 0, 'error' => 'Unsupported synthetic file format.'];
+        return ['success' => 0, 'error' => 'Unsupported DTR file format.'];
     }
 
-    private function parseCsv(string $path): array
+    private function parseCsv(string $path, int $maximumRows, bool $synthetic): array
     {
+        $label = $synthetic ? 'synthetic ' : '';
         $handle = fopen($path, 'rb');
         if (!$handle) {
-            return ['success' => 0, 'error' => 'Unable to read the synthetic CSV file.'];
+            return ['success' => 0, 'error' => 'Unable to read the ' . $label . 'CSV file.'];
         }
 
-        $headers = fgetcsv($handle);
+        $headers = fgetcsv($handle, null, ',', '"', '\\');
         if (!is_array($headers) || count($headers) === 0) {
             fclose($handle);
-            return ['success' => 0, 'error' => 'Synthetic CSV file has no header row.'];
+            return ['success' => 0, 'error' => ucfirst($label) . 'CSV file has no header row.'];
         }
 
         $rows = [];
-        while (($row = fgetcsv($handle)) !== false) {
+        while (($row = fgetcsv($handle, null, ',', '"', '\\')) !== false) {
             if ($this->isBlankRow($row)) {
                 continue;
             }
             $rows[] = $row;
-            if (count($rows) > 500) {
+            if (count($rows) > $maximumRows) {
                 fclose($handle);
-                return ['success' => 0, 'error' => 'Synthetic preview is limited to 500 rows.'];
+                return [
+                    'success' => 0,
+                    'error' => "The file exceeds the {$maximumRows}-row synchronous intake limit. No rows were staged.",
+                ];
             }
         }
         fclose($handle);
@@ -395,28 +583,33 @@ class SyntheticUploadParser
         ];
     }
 
-    private function parseXlsx(string $path): array
+    private function parseXlsx(string $path, int $maximumRows, bool $synthetic): array
     {
+        $label = $synthetic ? 'synthetic ' : '';
         if (!class_exists('ZipArchive')) {
-            return ['success' => 0, 'error' => 'Synthetic XLSX support is not available in this PHP runtime.'];
+            return ['success' => 0, 'error' => 'XLSX support is not available in this PHP runtime.'];
         }
 
         $zip = new ZipArchive();
         if ($zip->open($path) !== true) {
-            return ['success' => 0, 'error' => 'Unable to read the synthetic XLSX file.'];
+            return ['success' => 0, 'error' => 'Unable to read the ' . $label . 'XLSX file.'];
         }
 
-        $sharedStrings = $this->loadSharedStrings($zip);
-        $sheetXml = $this->getZipEntry($zip, 'xl/worksheets/sheet1.xml');
-        $zip->close();
+        try {
+            $this->validateArchive($zip);
+            $sharedStrings = $this->loadSharedStrings($zip);
+            $sheetXml = $this->getZipEntry($zip, 'xl/worksheets/sheet1.xml');
+        } finally {
+            $zip->close();
+        }
 
         if ($sheetXml === false) {
-            return ['success' => 0, 'error' => 'Synthetic XLSX file has no first worksheet.'];
+            return ['success' => 0, 'error' => ucfirst($label) . 'XLSX file has no first worksheet.'];
         }
 
-        $xml = simplexml_load_string($sheetXml);
+        $xml = $this->parseXml($sheetXml, ucfirst($label) . 'XLSX worksheet');
         if (!$xml || !isset($xml->sheetData->row)) {
-            return ['success' => 0, 'error' => 'Synthetic XLSX worksheet is empty.'];
+            return ['success' => 0, 'error' => ucfirst($label) . 'XLSX worksheet is empty.'];
         }
 
         $matrix = [];
@@ -443,15 +636,18 @@ class SyntheticUploadParser
 
         ksort($matrix);
         if (count($matrix) === 0) {
-            return ['success' => 0, 'error' => 'Synthetic XLSX worksheet is empty.'];
+            return ['success' => 0, 'error' => ucfirst($label) . 'XLSX worksheet is empty.'];
         }
 
         $headers = array_shift($matrix);
         $rows = [];
         foreach ($matrix as $row) {
             $rows[] = $row;
-            if (count($rows) > 500) {
-                return ['success' => 0, 'error' => 'Synthetic preview is limited to 500 rows.'];
+            if (count($rows) > $maximumRows) {
+                return [
+                    'success' => 0,
+                    'error' => "The file exceeds the {$maximumRows}-row synchronous intake limit. No rows were staged.",
+                ];
             }
         }
 
@@ -491,10 +687,32 @@ class SyntheticUploadParser
         ];
     }
 
-    private function validateRows(array $headers, array $rows, array $template, string $periodStart, string $periodEnd): array
+    private function validateRows(
+        array $headers,
+        array $rows,
+        array $template,
+        string $periodStart,
+        string $periodEnd,
+        string $identityPolicy = 'trusted_hris_identifier',
+        bool $synthetic = true,
+        array $context = []
+    ): array
     {
         $headerMap = $this->indexedHeaderMap($headers);
-        $existingKeys = $this->loadExistingSyntheticKeys((int)$template['id']);
+        $existingKeys = $synthetic
+            ? $this->loadExistingSyntheticKeys((int)$template['id'])
+            : [];
+        $canonicalFields = array_map(
+            static fn(array $field): string => (string)($field['canonical_field'] ?? ''),
+            $template['fields']
+        );
+        $summaryMode = !in_array('work_date', $canonicalFields, true)
+            && !in_array('time_in', $canonicalFields, true)
+            && !in_array('time_out', $canonicalFields, true)
+            && (in_array('worked_days', $canonicalFields, true)
+                || in_array('worked_hours', $canonicalFields, true)
+                || in_array('hours_worked', $canonicalFields, true)
+                || in_array('regular_hours', $canonicalFields, true));
         $seenKeys = [];
         $safeRows = [];
         $validRows = 0;
@@ -503,7 +721,10 @@ class SyntheticUploadParser
         foreach ($rows as $index => $row) {
             $rowNumber = $index + 2;
             $canonical = $this->canonicalizeRow($row, $headerMap, $template['fields']);
-            $employeeIdentifier = $this->extractEmployeeIdentifier($row, $headerMap, $template);
+            $employeeIdentifier = trim((string)($canonical['employee_identifier'] ?? ''));
+            if ($employeeIdentifier === '') {
+                $employeeIdentifier = $this->extractEmployeeIdentifier($row, $headerMap, $template);
+            }
             $canonical['employee_identifier'] = $employeeIdentifier;
             $errors = [];
 
@@ -514,32 +735,65 @@ class SyntheticUploadParser
             $employee = $employeeIdentifier === '' ? null : $this->findEmployee(
                 $employeeIdentifier,
                 (int)($template['client_id'] ?? 0),
-                (int)($template['id'] ?? 0)
+                (int)($template['id'] ?? 0),
+                $identityPolicy
             );
             if ($employeeIdentifier !== '' && !$employee) {
                 $errors[] = 'unknown_employee_identifier';
             }
 
-            $workDate = $this->parseDate((string)($canonical['work_date'] ?? ''), (string)$template['date_format']);
-            if (!$workDate) {
-                $errors[] = 'invalid_date';
-            }
+            $workDate = null;
+            $timeInRaw = '';
+            $timeOutRaw = '';
+            $timeIn = null;
+            $timeOut = null;
+            $workedDays = $this->numericValue($canonical['worked_days'] ?? null);
+            $workedHours = $this->numericValue(
+                $canonical['worked_hours']
+                    ?? $canonical['hours_worked']
+                    ?? $canonical['regular_hours']
+                    ?? null
+            );
+            if ($summaryMode) {
+                if ($workedDays === null && $workedHours === null) {
+                    $errors[] = 'missing_or_invalid_worked_days_hours';
+                }
+                if ($workedDays !== null && ($workedDays < 0 || $workedDays > 31)) {
+                    $errors[] = 'worked_days_out_of_range';
+                }
+                if ($workedHours !== null && ($workedHours < 0 || $workedHours > 744)) {
+                    $errors[] = 'worked_hours_out_of_range';
+                }
+            } else {
+                $workDate = $this->parseDate(
+                    (string)($canonical['work_date'] ?? ''),
+                    (string)$template['date_format']
+                );
+                if (!$workDate) {
+                    $errors[] = 'invalid_date';
+                }
 
-            $timeInRaw = (string)($canonical['time_in'] ?? '');
-            $timeOutRaw = (string)($canonical['time_out'] ?? '');
-            if (trim($timeInRaw) === '' || trim($timeOutRaw) === '') {
-                $errors[] = 'missing_time_in_time_out';
-            }
+                $timeInRaw = (string)($canonical['time_in'] ?? '');
+                $timeOutRaw = (string)($canonical['time_out'] ?? '');
+                if (trim($timeInRaw) === '' || trim($timeOutRaw) === '') {
+                    $errors[] = 'missing_time_in_time_out';
+                }
 
-            $timeIn = trim($timeInRaw) === '' ? null : $this->parseTime($timeInRaw, (string)$template['time_format']);
-            $timeOut = trim($timeOutRaw) === '' ? null : $this->parseTime($timeOutRaw, (string)$template['time_format']);
-            if ((trim($timeInRaw) !== '' && !$timeIn) || (trim($timeOutRaw) !== '' && !$timeOut)) {
-                $errors[] = 'invalid_time_in_time_out';
-            }
+                $timeIn = trim($timeInRaw) === ''
+                    ? null
+                    : $this->parseTime($timeInRaw, (string)$template['time_format']);
+                $timeOut = trim($timeOutRaw) === ''
+                    ? null
+                    : $this->parseTime($timeOutRaw, (string)$template['time_format']);
+                if ((trim($timeInRaw) !== '' && !$timeIn)
+                    || (trim($timeOutRaw) !== '' && !$timeOut)) {
+                    $errors[] = 'invalid_time_in_time_out';
+                }
 
-            if ($workDate && $periodStart !== '' && $periodEnd !== '') {
-                if ($workDate < $periodStart || $workDate > $periodEnd) {
-                    $errors[] = 'payroll_period_mismatch';
+                if ($workDate && $periodStart !== '' && $periodEnd !== '') {
+                    if ($workDate < $periodStart || $workDate > $periodEnd) {
+                        $errors[] = 'payroll_period_mismatch';
+                    }
                 }
             }
 
@@ -552,12 +806,14 @@ class SyntheticUploadParser
                 }
             }
 
-            $duplicateKey = implode('|', [
-                $employeeIdentifier,
-                $workDate ?: (string)($canonical['work_date'] ?? ''),
-                $timeIn ?: $timeInRaw,
-                $timeOut ?: $timeOutRaw,
-            ]);
+            $duplicateKey = $summaryMode
+                ? implode('|', [$employeeIdentifier, $periodStart, $periodEnd, 'summary'])
+                : implode('|', [
+                    $employeeIdentifier,
+                    $workDate ?: (string)($canonical['work_date'] ?? ''),
+                    $timeIn ?: $timeInRaw,
+                    $timeOut ?: $timeOutRaw,
+                ]);
 
             if (isset($seenKeys[$duplicateKey])) {
                 $errors[] = 'duplicate_row_within_file';
@@ -579,9 +835,11 @@ class SyntheticUploadParser
                 'row_number' => $rowNumber,
                 'employee_identifier' => $employeeIdentifier,
                 'work_date' => $workDate ?: (string)($canonical['work_date'] ?? ''),
-                'time_in' => $timeIn ?: $timeInRaw,
-                'time_out' => $timeOut ?: $timeOutRaw,
-                'validation_status' => $status,
+                    'time_in' => $timeIn ?: $timeInRaw,
+                    'time_out' => $timeOut ?: $timeOutRaw,
+                    'worked_days' => $workedDays,
+                    'worked_hours' => $workedHours,
+                    'validation_status' => $status,
                 'errors' => $errors,
                 'raw_payload' => $this->rowToAssoc($headers, $row),
                 'parsed_payload' => [
@@ -590,8 +848,18 @@ class SyntheticUploadParser
                     'work_date' => $workDate ?: (string)($canonical['work_date'] ?? ''),
                     'time_in' => $timeIn ?: $timeInRaw,
                     'time_out' => $timeOut ?: $timeOutRaw,
+                    'worked_days' => $workedDays,
+                    'worked_hours_preview' => $workedHours,
+                    'regular_hours' => $workedHours,
+                    'summary_preview' => $summaryMode,
                     'duplicate_key' => $duplicateKey,
-                    'synthetic' => true,
+                    'period_start' => $periodStart,
+                    'period_end' => $periodEnd,
+                    'pay_date' => (string)($context['pay_date'] ?? ''),
+                    'source_adapter' => (string)($context['source_adapter'] ?? 'SYNTHETIC_TEMPLATE'),
+                    'source_context' => (string)($context['source_context'] ?? 'synthetic_batch2'),
+                    'identity_policy' => $identityPolicy,
+                    'synthetic' => $synthetic,
                 ],
             ];
         }
@@ -605,6 +873,11 @@ class SyntheticUploadParser
 
     private function stagePreview(int $templateId, string $filename, string $user, string $checksum, int $rowCount, array $preview): int
     {
+        $scope = $this->db->prepare(
+            'SELECT client_id, location_id FROM dtr_format_templates WHERE id = :id LIMIT 1'
+        );
+        $scope->execute([':id' => $templateId]);
+        $templateScope = $scope->fetch(PDO::FETCH_ASSOC) ?: [];
         $this->db->beginTransaction();
         try {
             $batchUid = 'SYN-' . date('YmdHis') . '-' . bin2hex(random_bytes(3));
@@ -614,10 +887,16 @@ class SyntheticUploadParser
                 INSERT INTO dtr_upload_batches (
                     batch_uid,
                     template_id,
+                    client_id,
+                    location_id,
+                    identity_policy,
                     original_filename,
                     uploaded_by,
                     checksum,
                     row_count,
+                    accepted_row_count,
+                    rejected_row_count,
+                    was_truncated,
                     validation_status,
                     error_count,
                     processing_status,
@@ -626,10 +905,16 @@ class SyntheticUploadParser
                 ) VALUES (
                     :batch_uid,
                     :template_id,
+                    :client_id,
+                    :location_id,
+                    'trusted_hris_identifier',
                     :original_filename,
                     :uploaded_by,
                     :checksum,
                     :row_count,
+                    :accepted_row_count,
+                    :rejected_row_count,
+                    0,
                     :validation_status,
                     :error_count,
                     'validation_preview',
@@ -640,10 +925,14 @@ class SyntheticUploadParser
             $batch->execute([
                 ':batch_uid' => $batchUid,
                 ':template_id' => $templateId,
+                ':client_id' => $this->nullablePositiveInt($templateScope['client_id'] ?? null),
+                ':location_id' => $this->nullablePositiveInt($templateScope['location_id'] ?? null),
                 ':original_filename' => basename($filename),
                 ':uploaded_by' => $user,
                 ':checksum' => $checksum,
                 ':row_count' => $rowCount,
+                ':accepted_row_count' => (int)$preview['valid_rows'],
+                ':rejected_row_count' => (int)$preview['error_rows'],
                 ':validation_status' => $validationStatus,
                 ':error_count' => $preview['error_rows'],
             ]);
@@ -688,6 +977,126 @@ class SyntheticUploadParser
         }
     }
 
+    private function stageReal(
+        array $profile,
+        string $filename,
+        string $user,
+        string $checksum,
+        string $idempotencyKey,
+        array $preview
+    ): int {
+        $expectedRows = count($preview['safe_rows']);
+        if ($expectedRows <= 0
+            || $expectedRows !== ((int)$preview['valid_rows'] + (int)$preview['error_rows'])) {
+            throw new RuntimeException('The real DTR row reconciliation is invalid.');
+        }
+
+        $this->db->beginTransaction();
+        try {
+            $batchUid = 'DTR-' . (int)$profile['client_id'] . '-' . date('YmdHis')
+                . '-' . strtoupper(bin2hex(random_bytes(3)));
+            $validationStatus = $preview['error_rows'] > 0 ? 'failed' : 'passed';
+            $batch = $this->db->prepare("
+                INSERT INTO dtr_upload_batches (
+                    batch_uid, template_id, client_id, location_id,
+                    adapter_profile_id, adapter_key, adapter_version,
+                    adapter_config_hash, identity_policy,
+                    original_filename, uploaded_by, checksum, upload_idempotency_key,
+                    row_count, accepted_row_count, rejected_row_count, was_truncated,
+                    validation_status, error_count, processing_status,
+                    is_synthetic, source_context
+                ) VALUES (
+                    :batch_uid, :template_id, :client_id, :location_id,
+                    :adapter_profile_id, :adapter_key, :adapter_version,
+                    :adapter_config_hash, :identity_policy,
+                    :original_filename, :uploaded_by, :checksum, :upload_idempotency_key,
+                    :row_count, :accepted_row_count, :rejected_row_count, 0,
+                    :validation_status, :error_count, 'identity_review_required',
+                    0, 'generic_real_dtr'
+                )
+            ");
+            $batch->execute([
+                ':batch_uid' => $batchUid,
+                ':template_id' => (int)$profile['template_id'],
+                ':client_id' => (int)$profile['client_id'],
+                ':location_id' => $this->nullablePositiveInt($profile['location_id'] ?? null),
+                ':adapter_profile_id' => (int)$profile['id'],
+                ':adapter_key' => (string)$profile['adapter_key'],
+                ':adapter_version' => (string)$profile['adapter_version'],
+                ':adapter_config_hash' => (string)$profile['configuration_hash'],
+                ':identity_policy' => (string)$profile['identity_policy'],
+                ':original_filename' => basename($filename),
+                ':uploaded_by' => $user,
+                ':checksum' => $checksum,
+                ':upload_idempotency_key' => $idempotencyKey,
+                ':row_count' => $expectedRows,
+                ':accepted_row_count' => (int)$preview['valid_rows'],
+                ':rejected_row_count' => (int)$preview['error_rows'],
+                ':validation_status' => $validationStatus,
+                ':error_count' => (int)$preview['error_rows'],
+            ]);
+            $batchId = (int)$this->db->lastInsertId();
+
+            $rowInsert = $this->db->prepare("
+                INSERT INTO dtr_upload_staging_rows (
+                    batch_id, source_row_number, raw_payload, parsed_payload,
+                    validation_status, error_summary, is_synthetic
+                ) VALUES (
+                    :batch_id, :source_row_number, :raw_payload, :parsed_payload,
+                    :validation_status, :error_summary, 0
+                )
+            ");
+            foreach ($preview['safe_rows'] as $row) {
+                $rowInsert->execute([
+                    ':batch_id' => $batchId,
+                    ':source_row_number' => (int)$row['row_number'],
+                    ':raw_payload' => json_encode(
+                        $row['raw_payload'],
+                        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    ),
+                    ':parsed_payload' => json_encode(
+                        $row['parsed_payload'],
+                        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    ),
+                    ':validation_status' => (string)$row['validation_status'],
+                    ':error_summary' => json_encode(
+                        $row['errors'],
+                        JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                    ),
+                ]);
+            }
+
+            $count = $this->db->prepare(
+                'SELECT COUNT(*) FROM dtr_upload_staging_rows WHERE batch_id = :batch_id'
+            );
+            $count->execute([':batch_id' => $batchId]);
+            if ((int)$count->fetchColumn() !== $expectedRows) {
+                throw new RuntimeException('The staged DTR row count does not match the source row count.');
+            }
+            $this->db->commit();
+            return $batchId;
+        } catch (Throwable $error) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            throw $error;
+        }
+    }
+
+    private function existingRealBatch(string $idempotencyKey): ?array
+    {
+        $stmt = $this->db->prepare("
+            SELECT id, original_filename, row_count, accepted_row_count,
+                   rejected_row_count, validation_status, processing_status
+            FROM dtr_upload_batches
+            WHERE upload_idempotency_key = :upload_idempotency_key
+            LIMIT 1
+        ");
+        $stmt->execute([':upload_idempotency_key' => $idempotencyKey]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+
     private function loadTemplate(int $templateId): ?array
     {
         if ($templateId <= 0) {
@@ -708,7 +1117,7 @@ class SyntheticUploadParser
         }
 
         $fields = $this->db->prepare("
-            SELECT source_header, canonical_field, data_type, is_required, sort_order
+            SELECT source_header, canonical_field, data_type, is_required, sort_order, transform_rule
             FROM dtr_format_template_fields
             WHERE template_id = :template_id
             ORDER BY sort_order ASC, id ASC
@@ -719,7 +1128,12 @@ class SyntheticUploadParser
         return $template;
     }
 
-    private function findEmployee(string $identifier, int $clientId = 0, int $templateId = 0): ?array
+    private function findEmployee(
+        string $identifier,
+        int $clientId = 0,
+        int $templateId = 0,
+        string $identityPolicy = 'trusted_hris_identifier'
+    ): ?array
     {
         if ($clientId > 0 && $templateId > 0) {
             try {
@@ -736,6 +1150,10 @@ class SyntheticUploadParser
             } catch (Throwable $ignored) {
                 // Migration may not be installed yet; retain safe legacy lookup below.
             }
+        }
+
+        if ($identityPolicy !== 'trusted_hris_identifier') {
+            return null;
         }
 
         $stmt = $this->db->prepare("
@@ -867,11 +1285,43 @@ class SyntheticUploadParser
         foreach ($fields as $field) {
             $sourceKey = $this->headerKey((string)$field['source_header']);
             if (array_key_exists($sourceKey, $headerMap)) {
-                $canonical[(string)$field['canonical_field']] = trim((string)($row[$headerMap[$sourceKey]] ?? ''));
+                $canonical[(string)$field['canonical_field']] = $this->applyFieldValue(
+                    $row[$headerMap[$sourceKey]] ?? '',
+                    (string)($field['data_type'] ?? 'text'),
+                    (string)($field['transform_rule'] ?? '')
+                );
             }
         }
 
         return $canonical;
+    }
+
+    private function applyFieldValue($value, string $dataType, string $transformRule)
+    {
+        $value = trim((string)$value);
+        $rules = array_values(array_filter(array_map(
+            'trim',
+            preg_split('/[|,]+/', strtolower($transformRule)) ?: []
+        )));
+        foreach ($rules as $rule) {
+            if ($rule === 'uppercase') {
+                $value = mb_strtoupper($value);
+            } elseif ($rule === 'lowercase') {
+                $value = mb_strtolower($value);
+            } elseif ($rule === 'remove_spaces') {
+                $value = preg_replace('/\s+/', '', $value);
+            } elseif ($rule === 'collapse_spaces') {
+                $value = trim((string)preg_replace('/\s+/', ' ', $value));
+            } elseif ($rule === 'digits_only') {
+                $value = preg_replace('/\D+/', '', $value);
+            } elseif ($rule === 'strip_commas') {
+                $value = str_replace(',', '', $value);
+            }
+        }
+        if (strtolower($dataType) === 'number') {
+            $value = str_replace([',', ' '], '', $value);
+        }
+        return $value;
     }
 
     private function extractEmployeeIdentifier(array $row, array $headerMap, array $template): string
@@ -882,7 +1332,11 @@ class SyntheticUploadParser
         }
 
         foreach ($template['fields'] as $field) {
-            if (in_array((string)$field['canonical_field'], ['employee_id', 'employee_code'], true)) {
+            if (in_array(
+                (string)$field['canonical_field'],
+                ['employee_id', 'employee_code', 'employee_identifier'],
+                true
+            )) {
                 $sourceKey = $this->headerKey((string)$field['source_header']);
                 if (array_key_exists($sourceKey, $headerMap)) {
                     return trim((string)($row[$headerMap[$sourceKey]] ?? ''));
@@ -916,8 +1370,16 @@ class SyntheticUploadParser
     private function normalizeHeaderList(array $headers): array
     {
         $normalized = [];
-        foreach ($headers as $header) {
-            $normalized[] = trim((string)$header);
+        $numericKeys = array_filter(array_keys($headers), 'is_int');
+        if (count($numericKeys) === count($headers) && $numericKeys) {
+            $maximum = max($numericKeys);
+            for ($index = 0; $index <= $maximum; $index++) {
+                $normalized[$index] = trim((string)($headers[$index] ?? ''));
+            }
+            return $normalized;
+        }
+        foreach ($headers as $index => $header) {
+            $normalized[$index] = trim((string)$header);
         }
 
         return $normalized;
@@ -946,7 +1408,7 @@ class SyntheticUploadParser
             return [];
         }
 
-        $parsed = simplexml_load_string($xml);
+        $parsed = $this->parseXml($xml, 'Synthetic XLSX shared strings');
         if (!$parsed || !isset($parsed->si)) {
             return [];
         }
@@ -990,6 +1452,54 @@ class SyntheticUploadParser
         }
 
         return $zip->getFromName(str_replace('/', '\\', $path));
+    }
+
+    private function validateArchive(ZipArchive $zip): void
+    {
+        if ($zip->numFiles <= 0 || $zip->numFiles > self::MAX_ARCHIVE_ENTRIES) {
+            throw new RuntimeException('The workbook contains too many archive entries.');
+        }
+        $uncompressed = 0;
+        for ($index = 0; $index < $zip->numFiles; $index++) {
+            $stat = $zip->statIndex($index);
+            if (!is_array($stat)) {
+                throw new RuntimeException('The workbook archive is unreadable.');
+            }
+            $name = str_replace('\\', '/', (string)($stat['name'] ?? ''));
+            if ($name === '' || str_starts_with($name, '/') || preg_match('#(^|/)\.\.(/|$)#', $name)) {
+                throw new RuntimeException('The workbook contains an unsafe archive path.');
+            }
+            $size = (int)($stat['size'] ?? 0);
+            $compressed = (int)($stat['comp_size'] ?? 0);
+            if ($size < 0 || $size > self::MAX_ARCHIVE_ENTRY_BYTES) {
+                throw new RuntimeException('The workbook contains an oversized XML entry.');
+            }
+            if ($compressed > 0 && $size / $compressed > self::MAX_COMPRESSION_RATIO) {
+                throw new RuntimeException('The workbook compression ratio is unsafe.');
+            }
+            $uncompressed += $size;
+            if ($uncompressed > self::MAX_ARCHIVE_UNCOMPRESSED_BYTES) {
+                throw new RuntimeException('The expanded workbook is too large.');
+            }
+        }
+    }
+
+    private function parseXml(string $xml, string $label): SimpleXMLElement
+    {
+        if (preg_match('/<!DOCTYPE|<!ENTITY/i', $xml)) {
+            throw new RuntimeException($label . ' contains prohibited XML declarations.');
+        }
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $parsed = simplexml_load_string($xml, SimpleXMLElement::class, LIBXML_NONET | LIBXML_COMPACT);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+        if (!$parsed instanceof SimpleXMLElement) {
+            throw new RuntimeException($label . ' is unreadable.');
+        }
+        return $parsed;
     }
 
     private function applyConflictPreview(array $rows): array
@@ -1134,6 +1644,30 @@ class SyntheticUploadParser
         }
 
         return round(($end - $start) / 3600, 2);
+    }
+
+    private function validIsoDate(string $value): bool
+    {
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+        $errors = DateTimeImmutable::getLastErrors();
+        return $date instanceof DateTimeImmutable
+            && ($errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0))
+            && $date->format('Y-m-d') === $value;
+    }
+
+    private function nullablePositiveInt($value): ?int
+    {
+        $value = (int)$value;
+        return $value > 0 ? $value : null;
+    }
+
+    private function numericValue($value): ?float
+    {
+        if ($value === null || trim((string)$value) === '') {
+            return null;
+        }
+        $normalized = str_replace([',', ' '], '', trim((string)$value));
+        return is_numeric($normalized) ? (float)$normalized : null;
     }
 
     private function decodeErrors(string $value): array
