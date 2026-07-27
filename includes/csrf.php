@@ -4,7 +4,8 @@
  * Included by auth_guard.php and nav-bar.php.
  */
 
-if (session_status() === PHP_SESSION_NONE) session_start();
+require_once(__DIR__ . '/session_security.php');
+taascor_start_secure_session();
 
 /** Generate or retrieve the session CSRF token. */
 function csrf_token(): string {

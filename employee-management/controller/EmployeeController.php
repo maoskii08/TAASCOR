@@ -29,8 +29,6 @@ if($_POST['request'] == 'get-employee-list'){
 
     if(isset($getList['error']) == false){
 
-        $response['sql'] = $getList['sql'];
-
         if(count($getList['data']) > 0){
             foreach ($getList['data'] as $key => $row) {
                 $employee_id = $row['employee_id'];
@@ -130,7 +128,6 @@ if($_POST['request'] == 'get-employee-list'){
         }   
     } else{
         $response['error'] = $getList['error'];
-        $response['sql'] = $getList['sql'];
     }
 
     echo json_encode($response);
@@ -139,7 +136,7 @@ if($_POST['request'] == 'get-employee-list'){
     $ids = $_POST['employee_id_array'];
     $model->employee_id_array = explode(',', $ids);
     $result = $model->deleteEmployees();
-    if(($result['success'] ?? 0) == 1) log_action("Employee Deleted: IDs $ids");
+    if(($result['success'] ?? 0) == 1) log_action("Employee Removed From Active HRIS: IDs $ids");
     echo json_encode($result);
 }else if($_POST['request'] == 'terminate-employee'){
     $model->employee = $_POST['employee'];

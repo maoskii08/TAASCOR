@@ -5,6 +5,8 @@ require('../assets/vendor/libs/fpdf/fpdf.php');
 require('../config/db_connect.php');
 require_once(__DIR__ . '/fuji-reference-rules.php');
 require_once(__DIR__ . '/report-filter-rules.php');
+require_once(__DIR__ . '/preview-binding-rules.php');
+require_once(__DIR__ . '/../dtr-format-engine/model/PayrollLegacyScopeHasher.php');
 
 function pdf_text($value): string
 {
@@ -25,16 +27,30 @@ class PDF extends FPDF
 {
     public bool $fujiReferenceLayout = false;
     public bool $preReleasePreview = false;
+    public string $previewWatermark = '';
+
+    public function Header()
+    {
+        if (!$this->preReleasePreview || $this->previewWatermark === '') {
+            return;
+        }
+        $this->SetXY(3, 1);
+        $this->SetFont('Arial', 'B', 8);
+        $this->SetTextColor(150, 15, 55);
+        $this->SetFillColor(255, 225, 235);
+        $this->Cell(204, 6, $this->previewWatermark, 1, 0, 'C', true);
+        $this->SetTextColor(0, 0, 0);
+    }
 
     public function Footer()
     {
-        if (!$this->preReleasePreview) {
+        if (!$this->preReleasePreview || $this->previewWatermark === '') {
             return;
         }
         $this->SetY(-8);
         $this->SetFont('Arial', 'B', 7);
         $this->SetTextColor(170, 25, 80);
-        $this->Cell(0, 4, 'PRE-RELEASE PREVIEW - NOT A PUBLISHED PAYSLIP', 0, 0, 'C');
+        $this->Cell(0, 4, $this->previewWatermark, 0, 0, 'C');
         $this->SetTextColor(0, 0, 0);
     }
 
@@ -212,6 +228,9 @@ class PDF extends FPDF
         
         $overall_deduction = $other_deductions + $lates + $undertime + $employee_sss + $employee_philhealth + $employee_pagibig + $employee_tax
                                             + $company_loan + $pagibig_loan + $pagibig_calamity + $sss_loan + $sss_calamity;
+        $printed_total_deduction = $this->fujiReferenceLayout
+            ? fuji_reference_printed_total_deductions($overall_deduction, $lates, $undertime)
+            : $overall_deduction;
 
         $formatValue = function ($value, int $decimals = 2) {
             if ($this->fujiReferenceLayout && abs((float)$value) < 0.0000001) {
@@ -308,7 +327,7 @@ class PDF extends FPDF
         $this->SetFont('Arial', 'B', 8);
         $this->MultiCell(40, 4, "TOTAL DEDUCTIONS\nNET PAY", 1, 'L');
         $this->SetXY(188, $y_table_start + 56);
-        $this->MultiCell(15, 4, number_format($overall_deduction,2)."\n".number_format($net_pay,2), 1, 'R');
+        $this->MultiCell(15, 4, number_format($printed_total_deduction,2)."\n".number_format($net_pay,2), 1, 'R');
 
         $this->SetXY(148, $y_table_start + 64);
         $this->SetFont('Arial', '', 7);
@@ -396,6 +415,7 @@ $filterParams = [];
 try {
     $employee_ident = payslip_positive_int_filter($_GET, 'ei');
     $clientLocationId = payslip_positive_int_filter($_GET, 'cl');
+    $selectedRunId = payslip_positive_int_filter($_GET, 'run_id');
 } catch (InvalidArgumentException $error) {
     http_response_code(400);
     header('Content-Type: text/plain; charset=utf-8');
@@ -403,19 +423,26 @@ try {
 }
 
 $serverRequiresPreview = false;
+$legacyPreviewMode = false;
 try {
     $settingsTable = $db->prepare("\n        SELECT COUNT(*) FROM information_schema.tables
         WHERE table_schema = DATABASE()
           AND table_name = 'payroll_import_client_settings'
     ");
     $settingsTable->execute();
-    if ((int)$settingsTable->fetchColumn() > 0 && $configuredClientId !== false) {
+    $settingsSchemaExists = (int)$settingsTable->fetchColumn() > 0;
+    if (!$settingsSchemaExists || $configuredClientId === false) {
+        $legacyPreviewMode = true;
+    } else {
         $enrollment = $db->prepare("\n            SELECT smart_flow_enabled
             FROM payroll_import_client_settings
             WHERE client_id = :client_id
         ");
         $enrollment->execute([':client_id' => (int)$configuredClientId]);
-        if ((int)$enrollment->fetchColumn() === 1) {
+        $smartFlowEnabled = (int)$enrollment->fetchColumn() === 1;
+        if (!$smartFlowEnabled) {
+            $legacyPreviewMode = true;
+        } else {
             $serverRequiresPreview = true;
             $released = $db->prepare("\n                SELECT l.run_id
                 FROM payroll_import_release_locks l
@@ -428,8 +455,64 @@ try {
             ");
             $released->execute([':client_name' => $clientName, ':pay_day' => $payDay]);
             $releasedRunId = (int)$released->fetchColumn();
-            if ($releasedRunId > 0) {
-                $sealedQuery = ['run_id' => $releasedRunId];
+
+            $selectedRun = [];
+            if ($selectedRunId !== null) {
+                $runQuery = $db->prepare("\n                    SELECT r.id, r.status, r.release_status, r.pay_date,
+                           c.client_name,
+                           b.run_id AS binding_run_id,
+                           b.client_name AS binding_client_name,
+                           b.pay_day AS binding_pay_day,
+                           b.live_snapshot_hash AS binding_snapshot_hash,
+                           b.employee_count AS binding_employee_count,
+                           b.payroll_row_count AS binding_payroll_row_count,
+                           b.snapshot_payload AS binding_snapshot_payload,
+                           (
+                               SELECT COUNT(*)
+                               FROM payroll_import_release_checks rc
+                               WHERE rc.run_id = r.id
+                                 AND rc.check_code = 'LEGACY_SCOPE_BINDING'
+                                 AND rc.is_blocking = 1
+                                 AND rc.check_status = 'passed'
+                           ) AS legacy_binding_check_passed
+                    FROM payroll_import_runs r
+                    INNER JOIN taascor_client c ON c.client_id = r.client_id
+                    LEFT JOIN payroll_import_legacy_scope_bindings b ON b.run_id = r.id
+                    WHERE r.id = :run_id
+                      AND r.client_id = :client_id
+                      AND c.client_name = :client_name
+                      AND r.pay_date = :pay_day
+                    LIMIT 1
+                ");
+                $runQuery->execute([
+                    ':run_id' => $selectedRunId,
+                    ':client_id' => (int)$configuredClientId,
+                    ':client_name' => $clientName,
+                    ':pay_day' => $payDay,
+                ]);
+                $selectedRun = $runQuery->fetch(PDO::FETCH_ASSOC) ?: [];
+            }
+
+            $liveScope = [];
+            if ($releasedRunId <= 0 && count($selectedRun) > 0) {
+                $liveScope = (new PayrollLegacyScopeHasher($db))->snapshot($clientName, $payDay);
+            }
+            $previewDecision = payslip_preview_binding_policy([
+                'selected_run_id' => $selectedRunId,
+                'released_run_id' => $releasedRunId,
+                'client_name' => $clientName,
+                'pay_day' => $payDay,
+                'run' => $selectedRun,
+                'live' => $liveScope,
+            ]);
+            if (($previewDecision['success'] ?? 0) !== 1) {
+                http_response_code(409);
+                header('Content-Type: text/plain; charset=utf-8');
+                exit('Payslip preview blocked: ' . (string)($previewDecision['error'] ?? 'The selected run could not be verified.'));
+            }
+
+            if (($previewDecision['mode'] ?? '') === 'sealed_artifact') {
+                $sealedQuery = ['run_id' => (int)$previewDecision['authoritative_run_id']];
                 if ($employee_ident !== null) {
                     $sealedQuery['employee_id'] = $employee_ident;
                 }
@@ -694,14 +777,20 @@ $stmt->execute();
 $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $counter = 0;
 
+$watermarkPolicy = payslip_dynamic_watermark_policy(
+    $legacyPreviewMode,
+    $serverRequiresPreview,
+    (string)($_GET['preview'] ?? '') === '1'
+);
 $pdf = new PDF();
 $pdf->fujiReferenceLayout = $layout === 'fuji-reference';
-$pdf->preReleasePreview = $serverRequiresPreview || (string)($_GET['preview'] ?? '') === '1';
+$pdf->preReleasePreview = (bool)$watermarkPolicy['required'];
+$pdf->previewWatermark = (string)$watermarkPolicy['label'];
 $pdf->AddPage();
 
 $tables_per_page = 3; 
 $table_spacing = 90;  
-$y_start = 3; 
+$y_start = $pdf->preReleasePreview ? 9 : 3;
 
 foreach ($data as $row) {
     $y_position = $y_start + ($counter % $tables_per_page) * $table_spacing; 

@@ -110,6 +110,26 @@ final class EmployeeResolutionEngine
             }
         }
 
+        // Windows iconv can split precomposed Latin characters into separate
+        // tokens when ext-intl is unavailable. Normalize the common employee
+        // name characters deterministically before the iconv fallback.
+        $value = strtr($value, [
+            'À' => 'A', 'Á' => 'A', 'Â' => 'A', 'Ã' => 'A', 'Ä' => 'A', 'Å' => 'A',
+            'à' => 'a', 'á' => 'a', 'â' => 'a', 'ã' => 'a', 'ä' => 'a', 'å' => 'a',
+            'Ç' => 'C', 'ç' => 'c',
+            'È' => 'E', 'É' => 'E', 'Ê' => 'E', 'Ë' => 'E',
+            'è' => 'e', 'é' => 'e', 'ê' => 'e', 'ë' => 'e',
+            'Ì' => 'I', 'Í' => 'I', 'Î' => 'I', 'Ï' => 'I',
+            'ì' => 'i', 'í' => 'i', 'î' => 'i', 'ï' => 'i',
+            'Ñ' => 'N', 'ñ' => 'n',
+            'Ò' => 'O', 'Ó' => 'O', 'Ô' => 'O', 'Õ' => 'O', 'Ö' => 'O', 'Ø' => 'O',
+            'ò' => 'o', 'ó' => 'o', 'ô' => 'o', 'õ' => 'o', 'ö' => 'o', 'ø' => 'o',
+            'Ù' => 'U', 'Ú' => 'U', 'Û' => 'U', 'Ü' => 'U',
+            'ù' => 'u', 'ú' => 'u', 'û' => 'u', 'ü' => 'u',
+            'Ý' => 'Y', 'Ÿ' => 'Y', 'ý' => 'y', 'ÿ' => 'y',
+            'Æ' => 'AE', 'æ' => 'ae', 'Œ' => 'OE', 'œ' => 'oe',
+        ]);
+
         if (function_exists('iconv')) {
             $ascii = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
             if ($ascii !== false) {

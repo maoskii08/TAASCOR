@@ -25,6 +25,10 @@ check(
     'combines the two deduction amounts shown on the Fuji payslip'
 );
 check(
+    abs(fuji_reference_printed_total_deductions(1574.41, 11.25, 0) - 1563.16) < 0.0000001,
+    'keeps the Fuji printed subtotal distinct from effective net-pay deductions'
+);
+check(
     payslip_layout_for_client('Fujifilm Optiocs Phils. Inc') === 'fuji-reference',
     'selects the Fuji reference layout from the configured client name'
 );

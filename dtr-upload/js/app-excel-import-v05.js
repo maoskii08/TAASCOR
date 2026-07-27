@@ -79,7 +79,6 @@ var ExcelImport = function(params){
               processWorkbookData(wb);
 
           } catch(e) {
-              console.log(e);
               alerter("Error Reading/Processing Excel File! Please Try again");
               $('#readingFileStatus').html("");
               $('#tableOutput').html("");
@@ -100,7 +99,6 @@ var ExcelImport = function(params){
           $('#dataType').prop('disabled', false);
           $('#fileUploader').prop('disabled', false);
           document.getElementById('fileUploader').value= null;
-          console.log(error);
       };
 
       $("#smx_progress-parsing").html("Reading Data From File . . .");
@@ -183,7 +181,6 @@ var ExcelImport = function(params){
       try {
           saveAs(new Blob([s2ab(wbout)],{type:"application/octet-stream"}), fname);
       } catch(e) {
-          console.log(e, wbout);
           alerter("Error Saving Excel File Locally");
       }
   }
@@ -305,8 +302,6 @@ var ExcelImport = function(params){
       dynamicTB +=  "</tr>";
 
 
-      console.log("Required: " + columnMatch);
-      console.log("Found: " + counter);
 
       if(counter != columnMatch){
 
@@ -422,7 +417,6 @@ var ExcelImport = function(params){
               "\nhttps://github.com/SheetJS/js-xlsx " +
               "\nhttp://purl.eligrey.com/github/FileSaver.js/blob/master/FileSaver.js" +
               "\n is required!";
-          console.log(error);
           alert(error);
           return false;
       }
@@ -575,7 +569,6 @@ var ExcelImport = function(params){
           .done(function (response) {
             $("#smx_progress-upload").removeClass("progress-bar-animated");
             $("#smx_progress-upload").removeClass("active");
-            console.log(response);
             if(response.success == 1){
               $('#importModal').modal('hide');
               swal.fire({

@@ -206,6 +206,8 @@ function getEmployeeList() {
                       <tr>
                         ${actionCol}
                         <th>Employee Ident</th>
+                        <th>Record Status</th>
+                        <th>Terminated / Removed On</th>
                         <th>Old Employee Ident</th>
                         <th>Payroll Employee ID</th>
                         <th>Full Name</th>
@@ -213,7 +215,6 @@ function getEmployeeList() {
                         <th>First Name</th>
                         <th>Middle Name</th>
                         <th>Hire Date</th>
-                        <th>Separation Date</th>
                         <th>Present Address</th>
                         <th>Permanent Address</th>
                         <th>Contact Number</th>
@@ -284,5 +285,4 @@ function getEmployeeList() {
             
         });
 }
-
 

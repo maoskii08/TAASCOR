@@ -16,9 +16,14 @@ var ExcelImport = function(params){
   let columnMap = "";
   let importTypeSelector = params.importTypeSelector || "#dataType";
   let fileChooserSelector = params.fileChooserSelector || "#fileUploader";
+  let clientSelector = params.clientSelector || "#import-client";
   let tableOutputSelector = params.outputSelector || "#tableOutput";
   let importID = null;
   let date_array = [];
+  let selectedFileSize = 0;
+  let totalRows = 0;
+  const maxFileBytes = 5 * 1024 * 1024;
+  const maxTotalRows = 1000;
 
   $(fileChooserSelector).on("change", function () {
 
@@ -30,11 +35,12 @@ var ExcelImport = function(params){
       }
 
       if(!verifyFile(file)) {
-          alerter("Invalid File Selected!");
+          alerter("Select an XLSX, XLS, or CSV workbook no larger than 5 MiB.");
           document.getElementById('fileUploader').value= null;
           return false;
       }
 
+      selectedFileSize = Number(file.size || 0);
       _fileName = getFilename(file);
 
       $(tableOutputSelector).html("");
@@ -79,7 +85,6 @@ var ExcelImport = function(params){
               processWorkbookData(wb);
 
           } catch(e) {
-              console.log(e);
               alerter("Error Reading/Processing Excel File! Please Try again");
               $('#readingFileStatus').html("");
               $('#tableOutput').html("");
@@ -100,7 +105,6 @@ var ExcelImport = function(params){
           $('#dataType').prop('disabled', false);
           $('#fileUploader').prop('disabled', false);
           document.getElementById('fileUploader').value= null;
-          console.log(error);
       };
 
       $("#smx_progress-parsing").html("Reading Data From File . . .");
@@ -118,14 +122,22 @@ var ExcelImport = function(params){
   function importButtonClick() {
       columnMap = prepareColumnMap();
 
-        if(!columnMap) {
-            error = 1;
-            return false;
-        }
+      if(!columnMap) {
+          return false;
+      }
 
-        initUpload();
+      const clientId = Number($(clientSelector).val() || 0);
+      if(!Number.isInteger(clientId) || clientId <= 0) {
+          swal.fire({
+              icon: 'info',
+              title: 'Select the import client',
+              text: 'Choose the client that every employee row in this workbook belongs to.'
+          });
+          return false;
+      }
 
-        $('#smx_finalizeBt').html('Upload');
+      beginStagingContext(clientId);
+      return false;
   }
 
   $(document).on("click", "#smx_redoBt", function () {
@@ -183,7 +195,6 @@ var ExcelImport = function(params){
       try {
           saveAs(new Blob([s2ab(wbout)],{type:"application/octet-stream"}), fname);
       } catch(e) {
-          console.log(e, wbout);
           alerter("Error Saving Excel File Locally");
       }
   }
@@ -194,22 +205,15 @@ var ExcelImport = function(params){
       groups = 0;
       start = 0;
       stop = maxInAGroup;
+      importID = null;
   }
 
   function verifyFile(file) {
-      let extTemp = file.type.split(".");
-      let fileType = extTemp[extTemp.length - 1];
-
-
-      let nameTemp = file.name.split(".");
+      let nameTemp = String(file.name || "").toLowerCase().split(".");
       let ext = nameTemp[nameTemp.length - 1];
-
-
-      return (
-        (fileType == "sheet" || fileType == "ms-excel" || fileType == "text/csv") && (ext == "xlsx" || ext == "xls" || ext == "csv")
-
-        );
-
+      return ["xlsx", "xls", "csv"].includes(ext)
+          && Number(file.size || 0) > 0
+          && Number(file.size || 0) <= maxFileBytes;
   }
 
   function getFilename(file) {
@@ -308,8 +312,6 @@ var ExcelImport = function(params){
       dynamicTB +=  "</tr>";
 
 
-      console.log("Required: " + columnMatch);
-      console.log("Found: " + counter);
 
       if(counter != columnMatch){
 
@@ -404,7 +406,8 @@ var ExcelImport = function(params){
           "</div></div></div>" +
           "<br><br>");
 
-      $(fileChooserSelector + ", " + importTypeSelector + ", #smx_finalizeBt, .smx_col-maps").attr("disabled", "disabled");
+      $(fileChooserSelector + ", " + importTypeSelector + ", " + clientSelector
+        + ", #smx_finalizeBt, .smx_col-maps").attr("disabled", "disabled");
 
       //ignite the chain
       callPushDataToServer();
@@ -425,7 +428,6 @@ var ExcelImport = function(params){
               "\nhttps://github.com/SheetJS/js-xlsx " +
               "\nhttp://purl.eligrey.com/github/FileSaver.js/blob/master/FileSaver.js" +
               "\n is required!";
-          console.log(error);
           alert(error);
           return false;
       }
@@ -467,9 +469,55 @@ var ExcelImport = function(params){
           return false;
       }
 
+      totalRows = data.length - 1;
+      if(totalRows > maxTotalRows) {
+          alerter("Employee imports are limited to 1,000 rows per workbook. Split the file into governed client-scoped uploads.");
+          $('#readingFileStatus').html("");
+          $('#tableOutput').html("");
+          $('#dataType').prop('disabled', false);
+          $('#fileUploader').prop('disabled', false);
+          document.getElementById('fileUploader').value = null;
+          return false;
+      }
+
       //show Mapping
       showColumnMapping(data);
 
+  }
+
+  function beginStagingContext(clientId) {
+      const url = $(importTypeSelector).val();
+      const payload = {
+          action: "init",
+          client_id: clientId,
+          total_rows: totalRows,
+          file_name: fileName,
+          file_size: selectedFileSize
+      };
+
+      $("#smx_finalizeBt").prop("disabled", true).html(
+          'Initializing secure upload... <i class="fa fa-spinner fa-spin"></i>'
+      );
+
+      $.ajax({
+          url: url,
+          type: "POST",
+          contentType: "application/json;charset=utf-8",
+          data: JSON.stringify(payload),
+          dataType: "json"
+      })
+      .done(function (response) {
+          if(response && response.success === 1 && /^\d{9}$/.test(String(response.import_id || ""))) {
+              importID = String(response.import_id);
+              initUpload();
+              $("#smx_finalizeBt").html("Upload");
+              return;
+          }
+          showStagingError(response);
+      })
+      .fail(function (error) {
+          showStagingError(error && error.responseJSON ? error.responseJSON : null);
+      });
   }
 
   function callPushDataToServer() {
@@ -483,7 +531,9 @@ var ExcelImport = function(params){
       //extract the next batch from the whole data
 //                console.log("Pushing batch " + batch + " to server | start = " + start + " stop = " + stop);
       let currentData = data.slice(start, stop);
-      setTimeout(pushDataToServer(currentData), 1000);
+      setTimeout(function () {
+          pushDataToServer(currentData);
+      }, 0);
 
       //increase the index for the next batch so we know where we are
       start = stop;
@@ -492,8 +542,19 @@ var ExcelImport = function(params){
 
   function pushDataToServer(data) {
       let url = $(importTypeSelector).val();
+      const clientId = Number($(clientSelector).val() || 0);
 
-      let payload = $.extend({column_map: JSON.parse(columnMap), data: data}, {batch: batch}, {importID: importID});
+      let payload = {
+          action: "stage",
+          import_id: importID,
+          client_id: clientId,
+          total_rows: totalRows,
+          file_name: fileName,
+          file_size: selectedFileSize,
+          column_map: JSON.parse(columnMap),
+          data: data,
+          batch: batch
+      };
 
       $.ajax({
         url: url,
@@ -505,31 +566,15 @@ var ExcelImport = function(params){
       .done(function (response) {
 
         if(response.success){
-          import_id = response.import_id;
-          if(batch == 0){
-            importID = import_id;
-          }
-          updateProgress(import_id);
+          updateProgress(String(response.import_id));
         }else{
-          swal.fire({
-            icon: 'error',   
-            title: 'Something went wrong!',                 
-            text: "Error Message: " + response.error.message + ""               
-          }).then(function (result) {
-              window.location.reload()
-          });
+          showStagingError(response);
         }
         
 
       })
       .fail(function (error) {
-          alerter("ERROR OCCURRED! " + JSON.stringify(error) + "<br>");
-          $('#readingFileStatus').html("");
-          $('#tableOutput').html("");
-          $('#dataType').prop('disabled', false);
-          $('#fileUploader').prop('disabled', false);
-          document.getElementById('fileUploader').value= null;
-          $('#importModal').modal('hide');
+          showStagingError(error && error.responseJSON ? error.responseJSON : null);
       });
 
 
@@ -587,6 +632,10 @@ var ExcelImport = function(params){
               });
               
             } else {
+              if(response.error_code === 'employee_transfer_v2_required'){
+                showEmployeeTransferBlocker(response);
+                return;
+              }
 
               $("#smx_progress-parsing").removeClass("bg-primary");
               $("#smx_progress-parsing").html("Reading File Completed: Validation!");
@@ -600,6 +649,13 @@ var ExcelImport = function(params){
               errorArray = response.errors;
 
               if(response.hasOwnProperty("validation")){
+                if(response.staging_preserved === true){
+                  textDiv += '<div class="alert alert-warning" role="alert">'
+                    + 'No employee transfer was attempted. The staged upload was preserved for review.'
+                    + (response.import_id ? '<br><strong>Import reference: '
+                      + String(response.import_id) + '</strong>' : '')
+                    + '</div>';
+                }
                 for (let i = 0; i < response.validation.length; i++) {
                   error_id = response.validation[i];
                   error_message = response.error_message[response.validation[i]];
@@ -628,6 +684,11 @@ var ExcelImport = function(params){
             }
           })
           .fail(function (error) {
+              const response = error && error.responseJSON ? error.responseJSON : null;
+              if(response && response.error_code === 'employee_transfer_v2_required'){
+                showEmployeeTransferBlocker(response);
+                return;
+              }
               $('#importModal').modal('hide');
               alerter("ERROR OCCURRED! " + JSON.stringify(error) + "<br>");
               $('#readingFileStatus').html("");
@@ -641,6 +702,52 @@ var ExcelImport = function(params){
           //call the next guy in the queue
           callPushDataToServer();
       }
+  }
+
+  function showEmployeeTransferBlocker(response) {
+      const message = String(
+        response.message
+        || 'Employee import finalization is temporarily unavailable. The staged upload was preserved.'
+      );
+      const nextAction = String(
+        response.next_action
+        || 'Return to Employee Management and contact an administrator.'
+      );
+      const importReference = String(response.import_id || '');
+
+      $('#importModal').modal('hide');
+      $("#smx_progress-upload").removeClass("progress-bar-animated active");
+      swal.fire({
+        icon: 'warning',
+        title: 'Import staged — finalization blocked',
+        text: (importReference ? 'Import reference: ' + importReference + '. ' : '')
+          + message + ' ' + nextAction,
+        confirmButtonText: String(response.route_label || 'Return to Employee Management')
+      }).then(function () {
+        getEmployeeList();
+      });
+  }
+
+  function showStagingError(response) {
+      const message = String(
+        response && (response.message || response.error)
+        ? (response.message || response.error)
+        : 'The employee workbook could not be staged. No new batch was accepted.'
+      );
+      const importReference = response && response.import_id
+          ? ' Import reference: ' + String(response.import_id) + '.'
+          : '';
+
+      $("#smx_finalizeBt").prop("disabled", false).html("Upload");
+      $("#smx_progress-upload").removeClass("progress-bar-animated active");
+      $('#dataType').prop('disabled', false);
+      $('#fileUploader').prop('disabled', false);
+      $(clientSelector).prop('disabled', false);
+      swal.fire({
+          icon: 'error',
+          title: 'Employee import blocked',
+          text: message + importReference
+      });
   }
 
   function removeDuplicate(value, index, array) {

@@ -224,6 +224,144 @@ class SyntheticUploadParser
         }
     }
 
+    public function uploadPeriodSummary(array $post, array $file, string $user, array $profile): array
+    {
+        try {
+            $periodStart = trim((string)($post['period_start'] ?? ''));
+            $periodEnd = trim((string)($post['period_end'] ?? ''));
+            $payDate = trim((string)($post['pay_date'] ?? ''));
+            if (!$this->validIsoDate($periodStart)
+                || !$this->validIsoDate($periodEnd)
+                || !$this->validIsoDate($payDate)
+                || $periodEnd < $periodStart) {
+                return ['success' => 0, 'error' => 'Enter a valid payroll period and pay date.'];
+            }
+
+            $configuration = $profile['configuration'] ?? null;
+            $template = is_array($configuration) ? ($configuration['template'] ?? null) : null;
+            if (!is_array($template)
+                || (int)($template['id'] ?? 0) !== (int)($profile['template_id'] ?? 0)
+                || (int)($template['client_id'] ?? 0) !== (int)($profile['client_id'] ?? 0)
+                || empty($template['fields'])) {
+                return ['success' => 0, 'error' => 'The approved period-summary adapter snapshot is invalid.'];
+            }
+
+            $fileCheck = $this->validateUploadFile($file, false);
+            if (!$fileCheck['valid']) {
+                return ['success' => 0, 'error' => $fileCheck['error']];
+            }
+            if ($fileCheck['extension'] !== 'xlsx'
+                || strtolower((string)($profile['file_type'] ?? '')) !== 'xlsx') {
+                return ['success' => 0, 'error' => 'The period-summary adapter accepts only an approved XLSX workbook.'];
+            }
+
+            $parsed = $this->parsePeriodSummaryWorkbook(
+                (string)$file['tmp_name'],
+                $periodStart,
+                $periodEnd
+            );
+            if (empty($parsed['success'])) {
+                return $parsed;
+            }
+
+            $headerValidation = $this->validateHeaders($parsed['headers'], $template['fields']);
+            if (!$headerValidation['success']) {
+                return [
+                    'success' => 0,
+                    'error' => 'The selected period worksheet does not match the approved summary adapter.',
+                    'summary' => $headerValidation,
+                ];
+            }
+
+            $checksum = hash_file('sha256', (string)$file['tmp_name']);
+            $idempotencyKey = hash('sha256', implode('|', [
+                (int)$profile['client_id'],
+                (int)$profile['id'],
+                (string)$profile['configuration_hash'],
+                $checksum,
+                $periodStart,
+                $periodEnd,
+                $payDate,
+                (string)$parsed['source_sheet'],
+            ]));
+            $existing = $this->existingRealBatch($idempotencyKey);
+            if ($existing) {
+                return [
+                    'success' => 1,
+                    'batch_id' => (int)$existing['id'],
+                    'duplicate_upload' => true,
+                    'summary' => [
+                        'batch_id' => (int)$existing['id'],
+                        'filename' => (string)$existing['original_filename'],
+                        'row_count' => (int)$existing['row_count'],
+                        'valid_rows' => (int)$existing['accepted_row_count'],
+                        'error_rows' => (int)$existing['rejected_row_count'],
+                        'validation_status' => (string)$existing['validation_status'],
+                        'processing_status' => (string)$existing['processing_status'],
+                        'adapter_key' => (string)$profile['adapter_key'],
+                        'adapter_version' => (string)$profile['adapter_version'],
+                        'source_sheet' => (string)$parsed['source_sheet'],
+                        'duplicate_upload' => true,
+                    ],
+                    'rows' => [],
+                ];
+            }
+
+            $identityPolicy = (string)($profile['identity_policy'] ?? 'approved_mapping_required');
+            $preview = $this->validateRows(
+                $parsed['headers'],
+                $parsed['rows'],
+                $template,
+                $periodStart,
+                $periodEnd,
+                $identityPolicy,
+                false,
+                [
+                    'pay_date' => $payDate,
+                    'source_adapter' => (string)$profile['adapter_key'],
+                    'source_context' => 'period_summary_workbook',
+                    'source_sheet' => (string)$parsed['source_sheet'],
+                ]
+            );
+            $batchId = $this->stageReal(
+                $profile,
+                basename((string)$file['name']),
+                $user,
+                $checksum,
+                $idempotencyKey,
+                $preview
+            );
+
+            return [
+                'success' => 1,
+                'batch_id' => $batchId,
+                'duplicate_upload' => false,
+                'summary' => [
+                    'batch_id' => $batchId,
+                    'filename' => basename((string)$file['name']),
+                    'extension' => 'xlsx',
+                    'row_count' => count($parsed['rows']),
+                    'valid_rows' => $preview['valid_rows'],
+                    'error_rows' => $preview['error_rows'],
+                    'missing_required_headers' => [],
+                    'extra_unmapped_headers' => $headerValidation['extra_unmapped_headers'],
+                    'validation_status' => $preview['error_rows'] > 0 ? 'failed' : 'passed',
+                    'processing_status' => 'identity_review_required',
+                    'adapter_key' => (string)$profile['adapter_key'],
+                    'adapter_version' => (string)$profile['adapter_version'],
+                    'identity_policy' => $identityPolicy,
+                    'source_sheet' => (string)$parsed['source_sheet'],
+                    'synthetic' => false,
+                    'canonical_write' => 'blocked_staging_only',
+                ],
+                'rows' => array_slice($preview['safe_rows'], 0, 300),
+            ];
+        } catch (Throwable $error) {
+            error_log('DTR period-summary upload failed: ' . $error->getMessage());
+            return ['success' => 0, 'error' => 'Unable to stage the approved period-summary workbook.'];
+        }
+    }
+
     public function inspectRealUpload(array $file): array
     {
         try {
@@ -658,6 +796,339 @@ class SyntheticUploadParser
         ];
     }
 
+    private function parsePeriodSummaryWorkbook(
+        string $path,
+        string $periodStart,
+        string $periodEnd
+    ): array {
+        if (!class_exists('ZipArchive')) {
+            return ['success' => 0, 'error' => 'XLSX support is not available in this PHP runtime.'];
+        }
+
+        $zip = new ZipArchive();
+        if ($zip->open($path) !== true) {
+            return ['success' => 0, 'error' => 'Unable to read the period-summary XLSX workbook.'];
+        }
+
+        try {
+            $this->validateArchive($zip);
+            $sharedStrings = $this->loadSharedStrings($zip);
+            $matches = [];
+            foreach ($this->workbookSheetTargets($zip) as $sheet) {
+                $sheetXml = $this->getZipEntry($zip, (string)$sheet['target']);
+                if ($sheetXml === false) {
+                    continue;
+                }
+                $matrix = $this->worksheetMatrix((string)$sheetXml, $sharedStrings);
+                if (!$this->matrixMatchesPeriod($matrix, $periodStart, $periodEnd)) {
+                    continue;
+                }
+                $table = $this->extractPeriodSummaryTable($matrix, (string)$sheet['name']);
+                if (!empty($table['success'])) {
+                    $matches[] = $table;
+                }
+            }
+        } finally {
+            $zip->close();
+        }
+
+        if (count($matches) === 0) {
+            return [
+                'success' => 0,
+                'error' => 'No worksheet with a matching payroll-period marker and supported summary table was found.',
+            ];
+        }
+        if (count($matches) > 1) {
+            return [
+                'success' => 0,
+                'error' => 'More than one worksheet matches the selected payroll period. Remove or archive the duplicate period sheet before staging.',
+                'matching_sheets' => array_values(array_map(
+                    static fn(array $match): string => (string)$match['source_sheet'],
+                    $matches
+                )),
+            ];
+        }
+
+        return $matches[0];
+    }
+
+    private function workbookSheetTargets(ZipArchive $zip): array
+    {
+        $workbookXml = $this->getZipEntry($zip, 'xl/workbook.xml');
+        $relationshipsXml = $this->getZipEntry($zip, 'xl/_rels/workbook.xml.rels');
+        if ($workbookXml === false || $relationshipsXml === false) {
+            throw new RuntimeException('The workbook sheet catalog is missing.');
+        }
+        $workbook = $this->parseXml((string)$workbookXml, 'Workbook metadata');
+        $relationships = $this->parseXml((string)$relationshipsXml, 'Workbook relationships');
+        $relationshipTargets = [];
+        foreach ($relationships->Relationship as $relationship) {
+            $relationshipTargets[(string)$relationship['Id']] = (string)$relationship['Target'];
+        }
+
+        $workbook->registerXPathNamespace('m', 'http://schemas.openxmlformats.org/spreadsheetml/2006/main');
+        $workbook->registerXPathNamespace('r', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships');
+        $sheets = [];
+        foreach ($workbook->xpath('//m:sheet') ?: [] as $sheet) {
+            $attributes = $sheet->attributes(
+                'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+            );
+            $target = (string)($relationshipTargets[(string)$attributes['id']] ?? '');
+            if ($target === '') {
+                continue;
+            }
+            $sheets[] = [
+                'name' => (string)$sheet['name'],
+                'target' => str_starts_with($target, 'xl/')
+                    ? $target
+                    : 'xl/' . ltrim($target, '/'),
+            ];
+        }
+        return $sheets;
+    }
+
+    private function worksheetMatrix(string $sheetXml, array $sharedStrings): array
+    {
+        $xml = $this->parseXml($sheetXml, 'Period-summary worksheet');
+        if (!isset($xml->sheetData->row)) {
+            return [];
+        }
+        $matrix = [];
+        foreach ($xml->sheetData->row as $row) {
+            $rowNumber = (int)$row['r'];
+            $values = [];
+            foreach ($row->c as $cell) {
+                $column = $this->columnIndexFromCellRef((string)$cell['r']);
+                $type = (string)$cell['t'];
+                $value = isset($cell->v) ? (string)$cell->v : '';
+                if ($type === 's') {
+                    $value = $sharedStrings[(int)$value] ?? '';
+                } elseif ($type === 'inlineStr' && isset($cell->is->t)) {
+                    $value = (string)$cell->is->t;
+                }
+                $values[$column] = trim((string)preg_replace('/\s+/', ' ', (string)$value));
+            }
+            if ($values) {
+                $matrix[$rowNumber] = $values;
+            }
+        }
+        return $matrix;
+    }
+
+    private function matrixMatchesPeriod(array $matrix, string $periodStart, string $periodEnd): bool
+    {
+        foreach ($matrix as $rowNumber => $cells) {
+            if ((int)$rowNumber > 20) {
+                break;
+            }
+            foreach ($cells as $value) {
+                $period = $this->periodFromMarker((string)$value);
+                if ($period
+                    && $period['start'] === $periodStart
+                    && $period['end'] === $periodEnd) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private function periodFromMarker(string $value): ?array
+    {
+        $months = [
+            'jan' => 1, 'january' => 1,
+            'feb' => 2, 'february' => 2,
+            'mar' => 3, 'march' => 3,
+            'apr' => 4, 'april' => 4,
+            'may' => 5,
+            'jun' => 6, 'june' => 6,
+            'jul' => 7, 'july' => 7,
+            'aug' => 8, 'august' => 8,
+            'sep' => 9, 'sept' => 9, 'september' => 9,
+            'oct' => 10, 'october' => 10,
+            'nov' => 11, 'november' => 11,
+            'dec' => 12, 'december' => 12,
+        ];
+        if (!preg_match(
+            '/\b([a-z]+)\.?\s*(\d{1,2})\s*[-–+]\s*([a-z]+)\.?\s*(\d{1,2})\s*,?\s*(\d{4})\b/i',
+            $value,
+            $matches
+        )) {
+            return null;
+        }
+        $startMonth = $months[strtolower($matches[1])] ?? 0;
+        $endMonth = $months[strtolower($matches[3])] ?? 0;
+        $endYear = (int)$matches[5];
+        $startYear = $startMonth > $endMonth ? $endYear - 1 : $endYear;
+        if ($startMonth <= 0 || $endMonth <= 0) {
+            return null;
+        }
+        $start = DateTimeImmutable::createFromFormat(
+            '!Y-n-j',
+            $startYear . '-' . $startMonth . '-' . (int)$matches[2]
+        );
+        $end = DateTimeImmutable::createFromFormat(
+            '!Y-n-j',
+            $endYear . '-' . $endMonth . '-' . (int)$matches[4]
+        );
+        if (!$start instanceof DateTimeImmutable || !$end instanceof DateTimeImmutable) {
+            return null;
+        }
+        return ['start' => $start->format('Y-m-d'), 'end' => $end->format('Y-m-d')];
+    }
+
+    private function extractPeriodSummaryTable(array $matrix, string $sheetName): array
+    {
+        $headerRow = 0;
+        foreach ($matrix as $rowNumber => $cells) {
+            if ((int)$rowNumber > 30) {
+                break;
+            }
+            foreach ($cells as $value) {
+                if (str_contains($this->headerKey((string)$value), 'no. of')) {
+                    $headerRow = (int)$rowNumber;
+                    break 2;
+                }
+            }
+        }
+        if ($headerRow <= 0) {
+            return ['success' => 0];
+        }
+
+        $headersByColumn = [];
+        for ($row = $headerRow; $row <= $headerRow + 1; $row++) {
+            foreach (($matrix[$row] ?? []) as $column => $value) {
+                $value = trim((string)$value);
+                if ($value !== '') {
+                    $headersByColumn[(int)$column][] = $value;
+                }
+            }
+        }
+        $combined = [];
+        foreach ($headersByColumn as $column => $parts) {
+            $combined[$column] = $this->headerKey(implode(' ', $parts));
+        }
+
+        $daysColumn = $this->findSummaryColumn($combined, static fn(string $header): bool =>
+            str_contains($header, 'no. of')
+        );
+        $undertimeColumn = $this->findSummaryColumn($combined, static fn(string $header): bool =>
+            (bool)preg_match('/\but\b/', $header)
+        );
+        $nightDiffColumn = $this->findSummaryColumn($combined, static fn(string $header): bool =>
+            str_contains($header, 'night diff')
+        );
+        $overtimeColumn = $this->findSummaryColumn($combined, static fn(string $header): bool =>
+            (bool)preg_match('/^ot(?:\s+hours)?$/', $header)
+        );
+        $holidayColumn = $this->findSummaryColumn($combined, static fn(string $header): bool =>
+            !str_contains($header, 'night diff')
+            && (str_contains($header, '%')
+                || str_contains($header, 'holiday')
+                || str_contains($header, 'pasig day'))
+        );
+        if ($daysColumn === null || $overtimeColumn === null) {
+            return ['success' => 0];
+        }
+
+        $sequenceColumn = null;
+        $nameCounts = [];
+        foreach ($matrix as $rowNumber => $cells) {
+            if ((int)$rowNumber <= $headerRow) {
+                continue;
+            }
+            foreach ($cells as $column => $value) {
+                if ((int)$column >= $daysColumn || !is_numeric(trim((string)$value))) {
+                    continue;
+                }
+                $sequenceColumn = $sequenceColumn === null
+                    ? (int)$column
+                    : min($sequenceColumn, (int)$column);
+            }
+            if ($sequenceColumn === null
+                || !is_numeric(trim((string)($cells[$sequenceColumn] ?? '')))) {
+                continue;
+            }
+            foreach ($cells as $column => $value) {
+                $value = trim((string)$value);
+                if ((int)$column >= $daysColumn
+                    || (int)$column === $sequenceColumn
+                    || $value === ''
+                    || is_numeric($value)) {
+                    continue;
+                }
+                $nameCounts[(int)$column] = ($nameCounts[(int)$column] ?? 0) + 1;
+            }
+        }
+        if ($sequenceColumn === null || !$nameCounts) {
+            return ['success' => 0];
+        }
+        arsort($nameCounts);
+        $nameColumn = (int)array_key_first($nameCounts);
+        $holidayDescription = $holidayColumn === null
+            ? ''
+            : implode(' ', $headersByColumn[$holidayColumn] ?? []);
+
+        $headers = [
+            'Source Row',
+            'Employee Name',
+            'Days Worked',
+            'Undertime Hours',
+            'Overtime Hours',
+            'Holiday Description',
+            'Holiday Hours',
+            'Night Differential Overtime Hours',
+            'Source Sheet',
+        ];
+        $rows = [];
+        foreach ($matrix as $rowNumber => $cells) {
+            if ((int)$rowNumber <= $headerRow
+                || !is_numeric(trim((string)($cells[$sequenceColumn] ?? '')))) {
+                continue;
+            }
+            $employeeName = trim((string)($cells[$nameColumn] ?? ''));
+            if ($employeeName === '') {
+                continue;
+            }
+            $rows[] = [
+                (int)$rowNumber,
+                $employeeName,
+                trim((string)($cells[$daysColumn] ?? '')),
+                $undertimeColumn === null ? '' : trim((string)($cells[$undertimeColumn] ?? '')),
+                trim((string)($cells[$overtimeColumn] ?? '')),
+                $holidayDescription,
+                $holidayColumn === null ? '' : trim((string)($cells[$holidayColumn] ?? '')),
+                $nightDiffColumn === null ? '' : trim((string)($cells[$nightDiffColumn] ?? '')),
+                $sheetName,
+            ];
+            if (count($rows) > self::MAX_REAL_ROWS) {
+                return [
+                    'success' => 0,
+                    'error' => 'The selected period worksheet exceeds the 5,000-row synchronous intake limit.',
+                ];
+            }
+        }
+        if (!$rows) {
+            return ['success' => 0];
+        }
+        return [
+            'success' => 1,
+            'headers' => $headers,
+            'rows' => $rows,
+            'source_sheet' => $sheetName,
+        ];
+    }
+
+    private function findSummaryColumn(array $headers, callable $predicate): ?int
+    {
+        foreach ($headers as $column => $header) {
+            if ($predicate((string)$header)) {
+                return (int)$column;
+            }
+        }
+        return null;
+    }
+
     private function validateHeaders(array $headers, array $fields): array
     {
         $headerKeys = array_map([$this, 'headerKey'], $headers);
@@ -721,6 +1192,9 @@ class SyntheticUploadParser
         foreach ($rows as $index => $row) {
             $rowNumber = $index + 2;
             $canonical = $this->canonicalizeRow($row, $headerMap, $template['fields']);
+            if (is_numeric($canonical['source_row_number'] ?? null)) {
+                $rowNumber = (int)$canonical['source_row_number'];
+            }
             $employeeIdentifier = trim((string)($canonical['employee_identifier'] ?? ''));
             if ($employeeIdentifier === '') {
                 $employeeIdentifier = $this->extractEmployeeIdentifier($row, $headerMap, $template);
@@ -842,7 +1316,7 @@ class SyntheticUploadParser
                     'validation_status' => $status,
                 'errors' => $errors,
                 'raw_payload' => $this->rowToAssoc($headers, $row),
-                'parsed_payload' => [
+                'parsed_payload' => array_merge($canonical, [
                     'employee_identifier' => $employeeIdentifier,
                     'employee_name' => (string)($canonical['employee_name'] ?? ''),
                     'work_date' => $workDate ?: (string)($canonical['work_date'] ?? ''),
@@ -858,9 +1332,10 @@ class SyntheticUploadParser
                     'pay_date' => (string)($context['pay_date'] ?? ''),
                     'source_adapter' => (string)($context['source_adapter'] ?? 'SYNTHETIC_TEMPLATE'),
                     'source_context' => (string)($context['source_context'] ?? 'synthetic_batch2'),
+                    'source_sheet' => (string)($context['source_sheet'] ?? ($canonical['source_sheet'] ?? '')),
                     'identity_policy' => $identityPolicy,
                     'synthetic' => $synthetic,
-                ],
+                ]),
             ];
         }
 
@@ -996,6 +1471,9 @@ class SyntheticUploadParser
             $batchUid = 'DTR-' . (int)$profile['client_id'] . '-' . date('YmdHis')
                 . '-' . strtoupper(bin2hex(random_bytes(3)));
             $validationStatus = $preview['error_rows'] > 0 ? 'failed' : 'passed';
+            $sourceContext = (string)($profile['parser_key'] ?? '') === 'period_summary_workbook_v1'
+                ? 'period_summary_workbook'
+                : 'generic_real_dtr';
             $batch = $this->db->prepare("
                 INSERT INTO dtr_upload_batches (
                     batch_uid, template_id, client_id, location_id,
@@ -1012,7 +1490,7 @@ class SyntheticUploadParser
                     :original_filename, :uploaded_by, :checksum, :upload_idempotency_key,
                     :row_count, :accepted_row_count, :rejected_row_count, 0,
                     :validation_status, :error_count, 'identity_review_required',
-                    0, 'generic_real_dtr'
+                    0, :source_context
                 )
             ");
             $batch->execute([
@@ -1034,6 +1512,7 @@ class SyntheticUploadParser
                 ':rejected_row_count' => (int)$preview['error_rows'],
                 ':validation_status' => $validationStatus,
                 ':error_count' => (int)$preview['error_rows'],
+                ':source_context' => $sourceContext,
             ]);
             $batchId = (int)$this->db->lastInsertId();
 
@@ -1320,6 +1799,12 @@ class SyntheticUploadParser
         }
         if (strtolower($dataType) === 'number') {
             $value = str_replace([',', ' '], '', $value);
+            if ($value === '') {
+                return null;
+            }
+            if (is_numeric($value)) {
+                return (float)$value;
+            }
         }
         return $value;
     }

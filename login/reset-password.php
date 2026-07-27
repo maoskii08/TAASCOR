@@ -1,7 +1,10 @@
 <?php
+require_once('../includes/session_security.php');
+taascor_start_secure_session();
+require_once('../includes/csrf.php');
 // Validate token exists before rendering the form
 $token = $_GET['token'] ?? '';
-if (!$token) { header('Location: ./'); exit(); }
+if (!preg_match('/^[a-f0-9]{64}$/', $token)) { header('Location: ./'); exit(); }
 ?>
 <!doctype html>
 <html lang="en">
@@ -36,11 +39,25 @@ if (!$token) { header('Location: ./'); exit(); }
         <div id="resetForm" style="display:none">
           <div class="mb-3">
             <label class="form-label">New Password</label>
-            <input type="password" id="passInput" class="form-control" placeholder="Minimum 8 characters">
+            <div class="input-group">
+              <input type="password" id="passInput" class="form-control" autocomplete="new-password"
+                     placeholder="12+ characters with upper, lower, number, symbol">
+              <button class="btn btn-outline-secondary password-toggle" type="button"
+                      data-target="passInput" aria-label="Show new password" aria-pressed="false">
+                <i class="bx bx-show" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
           <div class="mb-3">
             <label class="form-label">Confirm Password</label>
-            <input type="password" id="confirmInput" class="form-control" placeholder="Repeat new password">
+            <div class="input-group">
+              <input type="password" id="confirmInput" class="form-control" autocomplete="new-password"
+                     placeholder="Repeat new password">
+              <button class="btn btn-outline-secondary password-toggle" type="button"
+                      data-target="confirmInput" aria-label="Show confirmed password" aria-pressed="false">
+                <i class="bx bx-show" aria-hidden="true"></i>
+              </button>
+            </div>
           </div>
           <button id="btnReset" class="btn btn-primary w-100">
             <i class="bx bx-lock-open-alt me-1"></i> Set New Password
@@ -58,10 +75,20 @@ if (!$token) { header('Location: ./'); exit(); }
 <script src="../assets/vendor/libs/jquery/jquery.js"></script>
 <script>
 var token = '<?= htmlspecialchars($token, ENT_QUOTES) ?>';
+var csrfToken = <?= json_encode(csrf_token()) ?>;
+
+$('.password-toggle').on('click', function () {
+    var input = document.getElementById($(this).data('target'));
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    $(this).attr('aria-pressed', show ? 'true' : 'false')
+           .attr('aria-label', show ? 'Hide password' : 'Show password')
+           .find('i').toggleClass('bx-show', !show).toggleClass('bx-hide', show);
+});
 
 // Validate token on load
 $.post('controller/ForgotPasswordController.php',
-    { request: 'validate-token', token: token },
+    { request: 'validate-token', token: token, csrf_token: csrfToken },
     function (r) {
         $('#loadingMsg').hide();
         if (r.valid) {
@@ -84,12 +111,16 @@ $('#btnReset').on('click', function () {
 
     if (!pass || !confirm) { showAlert('danger', 'Please fill in both fields.'); return; }
     if (pass !== confirm)  { showAlert('danger', 'Passwords do not match.'); return; }
-    if (pass.length < 8)   { showAlert('danger', 'Password must be at least 8 characters.'); return; }
+    if (pass.length < 12 || !/[a-z]/.test(pass) || !/[A-Z]/.test(pass)
+        || !/[0-9]/.test(pass) || !/[^a-zA-Z0-9]/.test(pass)) {
+        showAlert('danger', 'Use at least 12 characters with uppercase, lowercase, number, and symbol.');
+        return;
+    }
 
     $('#btnReset').prop('disabled', true).html('<i class="bx bx-loader-alt bx-spin me-1"></i> Saving...');
 
     $.post('controller/ForgotPasswordController.php',
-        { request: 'reset-password', token: token, password: pass, confirm: confirm },
+        { request: 'reset-password', token: token, password: pass, confirm: confirm, csrf_token: csrfToken },
         function (r) {
             if (r.success) {
                 $('#formSection').hide();

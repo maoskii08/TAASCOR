@@ -1,4 +1,8 @@
 <?php require_once('../config/page-permissions.php'); // $pages, $page_map, $role_names ?>
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1]);
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
   data-assets-path="../../assets/" data-template="vertical-menu-template-free" data-style="light">
@@ -133,6 +137,15 @@
               <!-- ── Users tab ──────────────────────────────────────── -->
               <div class="tab-pane fade show active" id="tab-users" role="tabpanel">
                 <div class="card">
+                  <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div>
+                      <h5 class="mb-1">User Accounts</h5>
+                      <small class="text-muted">Provision new accounts, assign ownership, then activate after review.</small>
+                    </div>
+                    <button id="openCreateUserBtn" type="button" class="btn btn-primary">
+                      <i class="bx bx-user-plus me-1"></i>Create User
+                    </button>
+                  </div>
                   <div class="card-body">
                     <div class="card-datatable mt-n2" id="table_container"></div>
                   </div>
@@ -331,6 +344,7 @@
                       <option value="2">HR</option>
                       <option value="3">Payroll</option>
                       <option value="4">Coordinator</option>
+                      <option value="5">C&amp;B</option>
                     </select>
                   </div>
                 </div>
@@ -356,8 +370,96 @@
       </div>
     </div>
 
+    <div class="modal fade" id="createUserModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1"
+      aria-labelledby="createUserModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header">
+            <div>
+              <h5 class="modal-title" id="createUserModalLabel">Create User Account</h5>
+              <small class="text-muted">New accounts are created as Pending and cannot log in until activated.</small>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div id="create-user-alert" class="alert alert-danger d-none" role="alert"></div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="signup-firstname" class="form-label">First name</label>
+                <input id="signup-firstname" type="text" class="form-control" maxlength="80" autocomplete="off" required>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-lastname" class="form-label">Last name</label>
+                <input id="signup-lastname" type="text" class="form-control" maxlength="80" autocomplete="off" required>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-username" class="form-label">Username</label>
+                <input id="signup-username" type="text" class="form-control" maxlength="64"
+                       pattern="[A-Za-z0-9._-]{3,64}" autocomplete="off" required>
+                <div class="form-text">3–64 characters: letters, numbers, dot, underscore, or hyphen.</div>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-email" class="form-label">Work email</label>
+                <input id="signup-email" type="email" class="form-control" maxlength="190" autocomplete="off" required>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-role" class="form-label">Role</label>
+                <select id="signup-role" class="form-select" required>
+                  <option value="">Select role</option>
+                  <option value="1">Admin</option>
+                  <option value="2">HR</option>
+                  <option value="3">Payroll</option>
+                  <option value="4">Coordinator</option>
+                  <option value="5">C&amp;B</option>
+                </select>
+              </div>
+              <div class="col-md-6 d-none" id="signup-client-container">
+                <label for="signup-client-location" class="form-label">Client assignment</label>
+                <select id="signup-client-location" class="form-select" multiple></select>
+                <div class="form-text">Required for Coordinator and C&amp;B. Admin, HR, and Payroll are global.</div>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-password" class="form-label">Temporary password</label>
+                <div class="input-group">
+                  <input id="signup-password" type="password" class="form-control" autocomplete="new-password" required>
+                  <button class="btn btn-outline-secondary password-toggle" type="button"
+                          data-target="signup-password" aria-label="Show temporary password" aria-pressed="false">
+                    <i class="bx bx-show" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <label for="signup-confirm-password" class="form-label">Confirm temporary password</label>
+                <div class="input-group">
+                  <input id="signup-confirm-password" type="password" class="form-control" autocomplete="new-password" required>
+                  <button class="btn btn-outline-secondary password-toggle" type="button"
+                          data-target="signup-confirm-password" aria-label="Show confirmed password" aria-pressed="false">
+                    <i class="bx bx-show" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="alert alert-info mb-0">
+                  <i class="bx bx-shield-quarter me-1"></i>
+                  Use at least 12 characters with uppercase, lowercase, number, and symbol. Share the temporary
+                  password through an approved secure channel only. After activation, have the user use
+                  Forgot Password to set a private password before performing HR or payroll work.
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button id="createUserBtn" type="button" class="btn btn-primary">
+              <i class="bx bx-user-plus me-1"></i>Create Pending Account
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-04.js?v=20260601g"></script>
+    <script src="js/index-04.js?v=20260726a"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>
@@ -374,6 +476,14 @@
         placeholder: 'Clients',
         allowClear: true,
         dropdownParent: $('#editUserModal')
+      });
+
+      $('#signup-client-location').select2({
+        theme: "bootstrap-5",
+        width: '100%',
+        placeholder: 'Select one or more clients',
+        allowClear: true,
+        dropdownParent: $('#createUserModal')
       });
   </script>
 </body>

@@ -14,6 +14,27 @@ if ($runId === false || $runId === null) {
     exit('A released payroll run is required.');
 }
 
+$scopeSql = '';
+$params = [
+    ':run_id' => (int)$runId,
+    ':employee_id' => $employeeId === false || $employeeId === null ? null : (int)$employeeId,
+    ':employee_id_match' => $employeeId === false || $employeeId === null ? null : (int)$employeeId,
+];
+if (!auth_has_global_client_access()) {
+    $clientIds = auth_client_ids();
+    if ($clientIds === []) {
+        http_response_code(403);
+        exit('No client access is assigned to this account.');
+    }
+    $placeholders = [];
+    foreach ($clientIds as $index => $clientId) {
+        $name = ':client_scope_' . $index;
+        $placeholders[] = $name;
+        $params[$name] = $clientId;
+    }
+    $scopeSql = ' AND r.client_id IN (' . implode(',', $placeholders) . ')';
+}
+
 $stmt = $pdoConn->prepare("\n    SELECT a.employee_id, a.storage_path, a.content_hash, a.byte_size,
            COALESCE(NULLIF(e.full_name, ''), CONCAT(e.last_name, ', ', e.first_name)) AS employee_name,
            r.run_uid, r.pay_date, l.client_name
@@ -27,13 +48,10 @@ $stmt = $pdoConn->prepare("\n    SELECT a.employee_id, a.storage_path, a.content
       AND r.status = 'released'
       AND r.release_status = 'released'
       AND (:employee_id IS NULL OR a.employee_id = :employee_id_match)
+      $scopeSql
     ORDER BY employee_name, a.employee_id
 ");
-$stmt->execute([
-    ':run_id' => (int)$runId,
-    ':employee_id' => $employeeId === false || $employeeId === null ? null : (int)$employeeId,
-    ':employee_id_match' => $employeeId === false || $employeeId === null ? null : (int)$employeeId,
-]);
+$stmt->execute($params);
 $artifacts = $stmt->fetchAll(PDO::FETCH_ASSOC);
 if (!$artifacts) {
     http_response_code(404);

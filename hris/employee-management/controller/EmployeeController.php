@@ -1,5 +1,6 @@
 ﻿<?php
 
+require_once(__DIR__ . '/../../legacy-route-disabled.php');
 require_once('../../includes/auth_guard.php');
 auth_require_role([1,2,3,4]);session_start();
 header("Cache-Control: no-cache, no-store, must-revalidate"); // HTTP 1.1.

@@ -184,6 +184,14 @@ function requireTemplateClientScope($db, int $templateId): void
         echo json_encode(['success' => 0, 'error' => 'The requested template was not found.']);
         exit;
     }
+    if ($clientId === null || (int)$clientId <= 0) {
+        if (!auth_has_global_client_access()) {
+            http_response_code(403);
+            echo json_encode(['success' => 0, 'error' => 'Access denied for this shared DTR template.']);
+            exit;
+        }
+        return;
+    }
     auth_require_client_id((int)$clientId);
 }
 
@@ -617,10 +625,15 @@ switch ($request) {
         break;
     case 'approve-smart-employee-cohort':
         @set_time_limit(180);
+        $selectedSourceKeys = json_decode((string)($_POST['source_keys'] ?? '[]'), true);
+        if (!is_array($selectedSourceKeys)) {
+            $selectedSourceKeys = [];
+        }
         $approval = $smartResolution->approveSafeCohort(
             (int)($_POST['batch_id'] ?? 0),
             trim((string)($_POST['reason'] ?? '')),
-            $user
+            $user,
+            $selectedSourceKeys
         );
         if (!empty($approval['success'])) {
             $approval['identity_gate'] = $identityManager->syncBatch(

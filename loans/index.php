@@ -1,3 +1,7 @@
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,3,5]);
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
   data-assets-path="../../assets/" data-template="vertical-menu-template-free" data-style="light">
@@ -612,7 +616,6 @@
 
     <?Php require("../includes/footer.php") ;?>
     <script src="js/index-05.js?v=20260531"></script>
-    <script src="js/app-excel-import-v02.js"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>

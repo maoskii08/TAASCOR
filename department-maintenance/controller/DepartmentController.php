@@ -21,8 +21,6 @@ if($_POST['request'] == 'get-department-list'){
 
     if(isset($getList['error']) == false){
 
-        $response['sql'] = $getList['sql'];
-
         if(count($getList['data']) > 0){
             foreach ($getList['data'] as $key => $row) {
                 $id = $row['department_id'];
@@ -38,7 +36,6 @@ if($_POST['request'] == 'get-department-list'){
         }   
     } else{
         $response['error'] = $getList['error'];
-        $response['sql'] = $getList['sql'];
     }
 
     echo json_encode($response);

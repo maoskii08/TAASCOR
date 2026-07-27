@@ -1,0 +1,768 @@
+:root {
+  --hris-help-primary: #696cff;
+  --hris-help-primary-dark: #5155e8;
+  --hris-help-text: #384551;
+  --hris-help-muted: #697a8d;
+  --hris-help-border: #e6e8ef;
+  --hris-help-surface: #ffffff;
+  --hris-help-soft: #f6f6ff;
+}
+
+.hris-help-navbar-item {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+.hris-help-launcher {
+  display: inline-grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid rgba(105, 108, 255, .25);
+  border-radius: 50%;
+  color: var(--hris-help-primary);
+  background: var(--hris-help-soft);
+  box-shadow: none;
+  font-weight: 800;
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.hris-help-launcher > span:first-child {
+  font-size: 21px;
+  line-height: 1;
+}
+
+.hris-help-launcher:hover,
+.hris-help-launcher:focus-visible {
+  color: #fff;
+  border-color: var(--hris-help-primary);
+  background: var(--hris-help-primary);
+  transform: translateY(-1px);
+}
+
+.hris-help-launcher:focus-visible,
+.hris-help-close:focus-visible,
+.hris-help-action summary:focus-visible {
+  outline: 3px solid rgba(105, 108, 255, .3);
+  outline-offset: 3px;
+}
+
+.hris-help-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1090;
+  visibility: hidden;
+  opacity: 0;
+  background: rgba(32, 39, 50, .48);
+  backdrop-filter: blur(2px);
+  transition: opacity .2s ease, visibility .2s ease;
+}
+
+.hris-help-overlay.is-open {
+  visibility: visible;
+  opacity: 1;
+}
+
+.hris-help-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 1095;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100vw);
+  height: 100vh;
+  overflow: hidden;
+  color: var(--hris-help-text);
+  background: var(--hris-help-surface);
+  box-shadow: -18px 0 48px rgba(32, 39, 50, .2);
+  transform: translateX(104%);
+  transition: transform .24s ease;
+}
+
+.hris-help-drawer.is-open {
+  transform: translateX(0);
+}
+
+.hris-help-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 26px 28px 22px;
+  color: #fff;
+  background:
+    radial-gradient(circle at 85% 12%, rgba(255, 255, 255, .2), transparent 34%),
+    linear-gradient(135deg, #5155e8, #7569ff);
+}
+
+.hris-help-kicker {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .14em;
+  opacity: .78;
+}
+
+.hris-help-header h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.35rem, 2.8vw, 1.8rem);
+  line-height: 1.2;
+}
+
+.hris-help-header p {
+  margin: 9px 0 0;
+  font-size: 13px;
+  opacity: .84;
+}
+
+.hris-help-close {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, .12);
+}
+
+.hris-help-close i {
+  font-size: 25px;
+}
+
+.hris-help-tools {
+  display: flex;
+  gap: 8px;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--hris-help-border);
+  background: #fff;
+}
+
+.hris-help-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 28px 42px;
+  overscroll-behavior: contain;
+}
+
+.hris-help-summary {
+  margin: 0 0 24px;
+  padding: 16px 18px;
+  border-left: 4px solid var(--hris-help-primary);
+  border-radius: 0 12px 12px 0;
+  color: #566a7f;
+  background: var(--hris-help-soft);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.hris-help-body section {
+  margin-top: 26px;
+}
+
+.hris-help-body h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: var(--hris-help-text);
+  font-size: 1rem;
+}
+
+.hris-help-body h3 i {
+  color: var(--hris-help-primary);
+  font-size: 20px;
+}
+
+.hris-help-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hris-help-section-heading h3 {
+  margin: 0;
+}
+
+.hris-help-section-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--hris-help-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hris-help-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hris-help-list li {
+  position: relative;
+  padding-left: 22px;
+  color: var(--hris-help-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.hris-help-list li::before {
+  position: absolute;
+  top: .52em;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--hris-help-primary);
+  box-shadow: 0 0 0 4px rgba(105, 108, 255, .11);
+  content: "";
+}
+
+.hris-help-process-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--hris-help-border);
+  border-radius: 14px;
+  background: #f8f8ff;
+}
+
+.hris-help-process-trigger {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  cursor: zoom-in;
+  text-align: left;
+}
+
+.hris-help-process-trigger:focus-visible {
+  outline: 3px solid rgba(105, 108, 255, .35);
+  outline-offset: 3px;
+}
+
+.hris-help-process-overlay {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(32, 39, 50, .78);
+  box-shadow: 0 4px 14px rgba(32, 39, 50, .18);
+  font-size: 12px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.hris-help-action {
+  overflow: hidden;
+  margin-bottom: 10px;
+  border: 1px solid var(--hris-help-border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.hris-help-action summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  color: var(--hris-help-text);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  list-style: none;
+}
+
+.hris-help-action summary::-webkit-details-marker {
+  display: none;
+}
+
+.hris-help-action summary i {
+  color: var(--hris-help-muted);
+  font-size: 20px;
+  transition: transform .18s ease;
+}
+
+.hris-help-action[open] summary i {
+  transform: rotate(180deg);
+}
+
+.hris-help-action ol {
+  margin: 0;
+  padding: 2px 38px 18px 46px;
+  color: var(--hris-help-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.hris-help-action li + li {
+  margin-top: 7px;
+}
+
+.hris-help-tips {
+  padding: 18px;
+  border: 1px solid #ffe6b7;
+  border-radius: 14px;
+  background: #fffaf0;
+}
+
+.hris-help-tips h3 {
+  color: #9a6711;
+}
+
+.hris-help-payroll-support {
+  padding: 18px;
+  border: 1px solid var(--hris-help-border);
+  border-radius: 14px;
+  background: #fafbfc;
+}
+
+.hris-help-payroll-support + .hris-help-payroll-support {
+  margin-top: 14px;
+}
+
+.hris-help-support-heading {
+  margin-bottom: 14px;
+}
+
+.hris-help-support-heading h3 {
+  margin-bottom: 4px;
+}
+
+.hris-help-support-heading p {
+  margin: 0;
+  color: var(--hris-help-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hris-help-payroll-checklist {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hris-help-payroll-checklist li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 11px;
+  padding: 11px 0;
+  border-top: 1px solid var(--hris-help-border);
+}
+
+.hris-help-payroll-checklist li:first-child {
+  border-top: 0;
+  padding-top: 2px;
+}
+
+.hris-help-payroll-checklist li > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--hris-help-primary-dark);
+  background: #ececff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hris-help-payroll-checklist strong,
+.hris-help-payroll-checklist p {
+  display: block;
+}
+
+.hris-help-payroll-checklist strong {
+  color: var(--hris-help-text);
+  font-size: 13px;
+}
+
+.hris-help-payroll-checklist p {
+  margin: 2px 0 0;
+  color: var(--hris-help-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.hris-help-search-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--hris-help-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hris-help-context-search {
+  position: relative;
+}
+
+.hris-help-context-search > i {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--hris-help-muted);
+  font-size: 18px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.hris-help-context-search input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 12px 9px 39px;
+  border: 1px solid #d9dee5;
+  border-radius: 9px;
+  color: var(--hris-help-text);
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+
+.hris-help-context-search input::placeholder {
+  color: #697a8d;
+  opacity: 1;
+}
+
+.hris-help-context-search input:focus-visible,
+.hris-help-center-link:focus-visible,
+.hris-help-context-faq summary:focus-visible {
+  outline: 3px solid rgba(105, 108, 255, .28);
+  outline-offset: 2px;
+}
+
+.hris-help-context-result {
+  margin: 7px 0 10px;
+  color: var(--hris-help-muted);
+  font-size: 11px;
+}
+
+.hris-help-context-faq {
+  border-top: 1px solid var(--hris-help-border);
+  background: transparent;
+}
+
+.hris-help-context-faq summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 2px;
+  color: var(--hris-help-text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  list-style: none;
+}
+
+.hris-help-context-faq summary::-webkit-details-marker {
+  display: none;
+}
+
+.hris-help-context-faq summary i {
+  flex: 0 0 auto;
+  color: var(--hris-help-muted);
+  font-size: 18px;
+  transition: transform .18s ease;
+}
+
+.hris-help-context-faq[open] summary i {
+  transform: rotate(180deg);
+}
+
+.hris-help-context-faq > div {
+  padding: 0 2px 14px;
+}
+
+.hris-help-context-faq p {
+  margin: 0 0 9px;
+  color: var(--hris-help-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.hris-help-context-faq a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--hris-help-primary-dark);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hris-help-context-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  color: var(--hris-help-muted);
+  text-align: center;
+}
+
+.hris-help-context-empty i {
+  color: var(--hris-help-primary);
+  font-size: 24px;
+}
+
+.hris-help-context-empty strong,
+.hris-help-context-empty span {
+  display: block;
+}
+
+.hris-help-context-empty strong {
+  color: var(--hris-help-text);
+  font-size: 13px;
+}
+
+.hris-help-context-empty span {
+  font-size: 11px;
+}
+
+.hris-help-center-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 13px 14px;
+  border: 1px solid #d9e2ff;
+  border-radius: 10px;
+  color: var(--hris-help-primary-dark);
+  background: #f5f6ff;
+}
+
+.hris-help-center-link:hover {
+  color: #4145cb;
+  background: #eeefff;
+}
+
+.hris-help-center-link > span {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: 6px;
+  align-items: center;
+}
+
+.hris-help-center-link > span > i {
+  grid-row: 1 / span 2;
+  font-size: 20px;
+}
+
+.hris-help-center-link strong,
+.hris-help-center-link small {
+  display: block;
+}
+
+.hris-help-center-link strong {
+  font-size: 12px;
+}
+
+.hris-help-center-link small {
+  margin-top: 2px;
+  color: var(--hris-help-muted);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+body.hris-help-open {
+  overflow: hidden;
+}
+
+body.hris-help-lightbox-open {
+  overflow: hidden;
+}
+
+body.hris-help-lightbox-open #layout-menu {
+  z-index: 1100 !important;
+}
+
+.hris-help-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  display: grid;
+  visibility: hidden;
+  place-items: center;
+  padding: 24px;
+  opacity: 0;
+  background: rgba(22, 27, 35, .82);
+  backdrop-filter: blur(5px);
+  transition: opacity .2s ease, visibility .2s ease;
+}
+
+.hris-help-lightbox.is-open {
+  visibility: visible;
+  opacity: 1;
+}
+
+.hris-help-lightbox-shell {
+  display: flex;
+  flex-direction: column;
+  width: min(1440px, 100%);
+  height: min(920px, calc(100vh - 48px));
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .38);
+  transform: scale(.97);
+  transition: transform .2s ease;
+}
+
+.hris-help-lightbox.is-open .hris-help-lightbox-shell {
+  transform: scale(1);
+}
+
+.hris-help-lightbox-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  color: #fff;
+  background: linear-gradient(135deg, #5155e8, #7569ff);
+}
+
+.hris-help-lightbox-header h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(1.1rem, 2.2vw, 1.45rem);
+}
+
+.hris-help-lightbox-header .hris-help-kicker {
+  margin-bottom: 4px;
+}
+
+.hris-help-lightbox-body {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  place-items: center;
+  overflow: auto;
+  padding: 24px;
+  background: #f5f6fa;
+  overscroll-behavior: contain;
+}
+
+.hris-help-lightbox-body img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border: 1px solid var(--hris-help-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 30px rgba(67, 89, 113, .14);
+}
+
+@media (max-width: 575.98px) {
+  .hris-help-navbar-item {
+    margin-right: 8px;
+  }
+
+  .hris-help-launcher {
+    width: 38px;
+    height: 38px;
+  }
+
+  .hris-help-header {
+    padding: 20px;
+  }
+
+  .hris-help-tools,
+  .hris-help-body {
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+
+  .hris-help-section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .hris-help-lightbox {
+    padding: 0;
+  }
+
+  .hris-help-lightbox-shell {
+    width: 100%;
+    height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .hris-help-lightbox-header {
+    padding: 14px 16px;
+  }
+
+  .hris-help-lightbox-body {
+    padding: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hris-help-launcher,
+  .hris-help-overlay,
+  .hris-help-drawer,
+  .hris-help-lightbox,
+  .hris-help-lightbox-shell,
+  .hris-help-action summary i {
+    transition: none;
+  }
+
+  .hris-help-context-faq summary i {
+    transition: none;
+  }
+}
+
+@media print {
+  body.hris-help-open > *:not(.hris-help-drawer) {
+    display: none !important;
+  }
+
+  .hris-help-drawer {
+    position: static;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .hris-help-close,
+  .hris-help-tools,
+  .hris-help-launcher,
+  .hris-help-overlay {
+    display: none !important;
+  }
+
+  .hris-help-body {
+    overflow: visible;
+  }
+}

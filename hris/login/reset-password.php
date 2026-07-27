@@ -1,4 +1,5 @@
 <?php
+require_once(__DIR__ . '/../legacy-route-disabled.php');
 // Validate token exists before rendering the form
 $token = $_GET['token'] ?? '';
 if (!$token) { header('Location: ./'); exit(); }

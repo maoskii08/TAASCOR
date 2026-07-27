@@ -45,6 +45,23 @@ function dtr_format_number($value): string
     return number_format((float)($value ?? 0), 2);
 }
 
+function dtr_delete_review_secret(): string
+{
+    $configured = trim((string)(getenv('TAASCOR_DTR_REVIEW_SECRET') ?: ''));
+    if ($configured !== '') {
+        return hash('sha256', $configured);
+    }
+    $sessionId = session_id();
+    $csrfToken = (string)($_SESSION['csrf_token'] ?? '');
+    if ($sessionId === '' || $csrfToken === '') {
+        return '';
+    }
+    return hash(
+        'sha256',
+        'taascor-dtr-review-v1|' . $sessionId . '|' . $csrfToken . '|' . __DIR__
+    );
+}
+
 if($_POST['request'] == 'get-dtr-list'){
     $response['data'] = [];
     $response['data3'] = [];
@@ -69,16 +86,29 @@ if($_POST['request'] == 'get-dtr-list'){
             if(count($getList['data']) > 0){
                 foreach ($getList['data'] as $key => $row) {
                     $employee_id = $row['employee_id'];
-                    $action = "<button id='updateBtn'  class='btn btn-sm btn-primary' value='$employee_id'><i class='bx bx-pencil'></i></button>";
+                    $employee_id_html = htmlspecialchars((string)$employee_id, ENT_QUOTES, 'UTF-8');
+                    $action = "<button type='button' class='btn btn-sm btn-primary js-dtr-update' value='{$employee_id_html}'"
+                        . " aria-label='Edit DTR for employee {$employee_id_html}' title='Edit DTR'>"
+                        . "<i class='bx bx-pencil' aria-hidden='true'></i></button>";
                     if($row['daily_worked'] > 0){
-                        $action .= " <button id='removeBenBtn' class='btn btn-sm btn-danger' value='$employee_id'><i class='bx bx-shield-x'></i></button>
-                                    <button id='deleteRecord' class='btn btn-sm btn-danger' value='$employee_id'><i class='bx bx-trash'></i></button>";
+                        $action .= " <button type='button' class='btn btn-sm btn-danger js-remove-benefits' value='{$employee_id_html}'"
+                            . " aria-label='Remove government benefits for employee {$employee_id_html}' title='Remove government benefits'>"
+                            . "<i class='bx bx-shield-x' aria-hidden='true'></i></button>"
+                            . " <button type='button' class='btn btn-sm btn-danger js-delete-record' value='{$employee_id_html}'"
+                            . " aria-label='Delete payroll records for employee {$employee_id_html}' title='Delete employee payroll records'>"
+                            . "<i class='bx bx-trash' aria-hidden='true'></i></button>";
                     }
                     if($islocked['locked']){
-                        $action = "<button id='updateBtn' class='btn btn-sm btn-primary' disabled><i class='bx bx-pencil'></i></button>";
+                        $action = "<button type='button' class='btn btn-sm btn-primary js-dtr-update' disabled aria-disabled='true'"
+                            . " aria-label='Edit DTR for employee {$employee_id_html}' title='Payroll is posted and locked'>"
+                            . "<i class='bx bx-pencil' aria-hidden='true'></i></button>";
                         if($row['daily_worked'] > 0){
-                            $action .= " <button id='removeBenBtn' class='btn btn-sm btn-danger' disabled><i class='bx bx-shield-x'></i></button>
-                                        <button id='deleteRecord' class='btn btn-sm btn-danger'><i class='bx bx-trash'></i></button>";
+                            $action .= " <button type='button' class='btn btn-sm btn-danger js-remove-benefits' disabled aria-disabled='true'"
+                                . " aria-label='Remove government benefits for employee {$employee_id_html}' title='Payroll is posted and locked'>"
+                                . "<i class='bx bx-shield-x' aria-hidden='true'></i></button>"
+                                . " <button type='button' class='btn btn-sm btn-danger js-delete-record' disabled aria-disabled='true'"
+                                . " aria-label='Delete payroll records for employee {$employee_id_html}' title='Payroll is posted and locked'>"
+                                . "<i class='bx bx-trash' aria-hidden='true'></i></button>";
                         }
                     }
                     $response['data'][] = array(
@@ -180,43 +210,62 @@ if($_POST['request'] == 'get-dtr-list'){
     $model->pay_day = $_POST['pay_day'];
     echo json_encode($model->validateManualDates());
 }else if($_POST['request'] == 'update-dtr'){
-    $model->employee_ident = $_POST["employee_ident"];
-    $model->daily_salary = $_POST["daily_salary"];
-    $model->days_worked = $_POST["days_worked"];
-    $model->absent = $_POST["absent"];
-    $model->lates = $_POST["lates"];
-    $model->undertime = $_POST["undertime"];
-    $model->vacation_leave = $_POST["vacation_leave"];
-    $model->sick_leave = $_POST["sick_leave"];
-    $model->overtime = $_POST["overtime"];
-    $model->night_diff = $_POST["night_diff"];
-    $model->night_diff_ot = $_POST["night_diff_ot"];
-    $model->regular_holiday = $_POST["regular_holiday"];
-    $model->regular_holiday_ot = $_POST["regular_holiday_ot"];
-    $model->regular_holiday_night_diff = $_POST["regular_holiday_night_diff"];
-    $model->special_holiday = $_POST["special_holiday"];
-    $model->special_holiday_ot = $_POST["special_holiday_ot"];
-    $model->special_holiday_night_diff = $_POST["special_holiday_night_diff"];
-    $model->rest_day = $_POST["rest_day"];
-    $model->rest_day_ot = $_POST["rest_day_ot"];
-    $model->rest_day_night_diff = $_POST["rest_day_night_diff"];
-    $model->rd_regular_holiday = $_POST["rd_regular_holiday"];
-    $model->rd_regular_holiday_ot = $_POST["rd_regular_holiday_ot"];
-    $model->rd_regular_holiday_night_diff = $_POST["rd_regular_holiday_night_diff"];
-    $model->rd_special_holiday = $_POST["rd_special_holiday"];
-    $model->rd_special_holiday_ot = $_POST["rd_special_holiday_ot"];
-    $model->rd_special_holiday_night_diff = $_POST["rd_special_holiday_night_diff"];
-    $model->client = $_POST['client_name'];
-    $model->cut_off = $_POST['cut_off'];
-    $model->pay_day = $_POST['pay_day'];
-    $model->start_date = $_POST['start_date'];
-    $model->end_date = $_POST['end_date'];
+    $validation = DTRMutationRules::validateUpdate($_POST);
+    if (($validation['success'] ?? 0) !== 1) {
+        echo json_encode($validation);
+        exit();
+    }
+    $data = $validation['data'];
 
-    $model->regular_holiday_nd_ot = $_POST['regular_holiday_nd_ot'];
-    $model->special_holiday_nd_ot = $_POST['special_holiday_nd_ot'];
-    $model->rest_day_nd_ot = $_POST['rest_day_nd_ot'];
-    $model->rd_regular_holiday_nd_ot = $_POST['rd_regular_holiday_nd_ot'];
-    $model->rd_special_holiday_nd_ot = $_POST['rd_special_holiday_nd_ot'];
+    $model->employee_ident = $data["employee_ident"];
+    $model->daily_salary = $data["daily_salary"];
+    $model->days_worked = $data["days_worked"];
+    $model->absent = $data["absent"];
+    $model->lates = $data["lates"];
+    $model->undertime = $data["undertime"];
+    $model->vacation_leave = $data["vacation_leave"];
+    $model->sick_leave = $data["sick_leave"];
+    $model->overtime = $data["overtime"];
+    $model->night_diff = $data["night_diff"];
+    $model->night_diff_ot = $data["night_diff_ot"];
+    $model->regular_holiday = $data["regular_holiday"];
+    $model->regular_holiday_ot = $data["regular_holiday_ot"];
+    $model->regular_holiday_night_diff = $data["regular_holiday_night_diff"];
+    $model->special_holiday = $data["special_holiday"];
+    $model->special_holiday_ot = $data["special_holiday_ot"];
+    $model->special_holiday_night_diff = $data["special_holiday_night_diff"];
+    $model->rest_day = $data["rest_day"];
+    $model->rest_day_ot = $data["rest_day_ot"];
+    $model->rest_day_night_diff = $data["rest_day_night_diff"];
+    $model->rd_regular_holiday = $data["rd_regular_holiday"];
+    $model->rd_regular_holiday_ot = $data["rd_regular_holiday_ot"];
+    $model->rd_regular_holiday_night_diff = $data["rd_regular_holiday_night_diff"];
+    $model->rd_special_holiday = $data["rd_special_holiday"];
+    $model->rd_special_holiday_ot = $data["rd_special_holiday_ot"];
+    $model->rd_special_holiday_night_diff = $data["rd_special_holiday_night_diff"];
+    $model->client = $data['client_name'];
+    $model->cut_off = $data['cut_off'];
+    $model->pay_day = $data['pay_day'];
+    $model->start_date = $data['start_date'];
+    $model->end_date = $data['end_date'];
+
+    $model->regular_holiday_nd_ot = $data['regular_holiday_nd_ot'];
+    $model->special_holiday_nd_ot = $data['special_holiday_nd_ot'];
+    $model->rest_day_nd_ot = $data['rest_day_nd_ot'];
+    $model->rd_regular_holiday_nd_ot = $data['rd_regular_holiday_nd_ot'];
+    $model->rd_special_holiday_nd_ot = $data['rd_special_holiday_nd_ot'];
+    $model->change_reason = $data['change_reason'];
+    $model->change_evidence = $data['change_evidence'];
+    $model->actor = auth_user();
+
+    // The legacy individual calculators currently control their own
+    // transactions. Prove a reviewed, transaction-safe definition before any
+    // DTR row lock or mutation is attempted.
+    $calculatorSafety = $model->calculatorSafetyEvidence();
+    if (($calculatorSafety['success'] ?? 0) !== 1) {
+        echo json_encode($calculatorSafety);
+        exit();
+    }
 
     $response = run_unlocked_payroll_mutation(
         $pdoConn,
@@ -225,6 +274,11 @@ if($_POST['request'] == 'get-dtr-list'){
         function () use ($model, $pdoConn): array {
             try {
                 $pdoConn->beginTransaction();
+                $scope = $model->validateExistingDTRUpdateScope(true);
+                if (($scope['success'] ?? 0) !== 1) {
+                    $pdoConn->rollBack();
+                    return $scope;
+                }
                 $result = $model->updateDTR();
                 if (($result['success'] ?? 0) !== 1) {
                     $pdoConn->rollBack();
@@ -235,7 +289,19 @@ if($_POST['request'] == 'get-dtr-list'){
                     $pdoConn->rollBack();
                     return $result;
                 }
+                if (!$pdoConn->inTransaction()) {
+                    throw new RuntimeException(
+                        'The DTR calculator ended the application transaction unexpectedly.'
+                    );
+                }
+                $afterSnapshot = $model->manualMutationAfterSnapshot();
+                $auditEvent = $model->writeManualUpdateAudit(
+                    (array)($result['calculator_safety'] ?? []),
+                    $afterSnapshot
+                );
                 $pdoConn->commit();
+                $result['audit_recorded'] = true;
+                $result['audit_event'] = $auditEvent;
                 return $result;
             } catch (Throwable $error) {
                 if ($pdoConn->inTransaction()) {
@@ -249,8 +315,13 @@ if($_POST['request'] == 'get-dtr-list'){
     echo json_encode($response);
 }else if($_POST['request'] == 'remove-govt-benefits'){
     $model->client = employee_action_client($pdoConn, $_POST);
-    $model->employee_ident = $_POST["employee_ident"];
-    $model->pay_day = $_POST['pay_day'];
+    $model->employee_ident = $_POST["employee_ident"] ?? null;
+    $model->pay_day = $_POST['pay_day'] ?? '';
+    $model->cut_off = $_POST['cut_off'] ?? '';
+    $model->benefits_confirmation = $_POST['benefits_confirmation'] ?? '';
+    $model->change_reason = $_POST['change_reason'] ?? '';
+    $model->change_evidence = $_POST['change_evidence'] ?? '';
+    $model->actor = auth_user();
     echo json_encode(run_unlocked_payroll_mutation(
         $pdoConn,
         (string)$model->client,
@@ -259,19 +330,43 @@ if($_POST['request'] == 'get-dtr-list'){
     ));
 }else if($_POST['request'] == 'delete-employee-dtr'){
     $model->client = employee_action_client($pdoConn, $_POST);
-    $model->employee_ident = $_POST["employee_ident"];
-    $model->pay_day = $_POST['pay_day'];
+    $model->employee_ident = $_POST["employee_ident"] ?? null;
+    $model->pay_day = $_POST['pay_day'] ?? '';
+    $model->cut_off = $_POST['cut_off'] ?? '';
+    $model->deletion_confirmation = $_POST['deletion_confirmation'] ?? '';
+    $model->deletion_reason = $_POST['deletion_reason'] ?? '';
+    $model->deletion_evidence = $_POST['deletion_evidence'] ?? '';
+    $model->actor = auth_user();
     echo json_encode(run_unlocked_payroll_mutation(
         $pdoConn,
         (string)$model->client,
         (string)$model->pay_day,
         function () use ($model): array { return $model->deleteEmployeeDTR(); }
     ));
+}else if($_POST['request'] == 'preflight-delete-dtr-upload'){
+    $model->client = $_POST["client_name"] ?? '';
+    $model->pay_day = $_POST['pay_day'] ?? '';
+    $model->branch = $_POST['branch'] ?? null;
+    $model->client_location = $_POST['client_location'] ?? null;
+    $model->actor = auth_user();
+    $model->deletion_review_secret = dtr_delete_review_secret();
+    $lock = $model->isLocked();
+    echo json_encode(
+        ($lock['success'] ?? 0) === 1
+            ? $model->getDeleteDTRUploadPreflight()
+            : $lock
+    );
 }else if($_POST['request'] == 'delete-dtr-upload'){
-    $model->client = $_POST["client_name"];
-    $model->pay_day = $_POST['pay_day'];
-    $model->branch = $_POST['branch'];
-    $model->client_location = $_POST['client_location'];
+    $model->client = $_POST["client_name"] ?? '';
+    $model->pay_day = $_POST['pay_day'] ?? '';
+    $model->branch = $_POST['branch'] ?? null;
+    $model->client_location = $_POST['client_location'] ?? null;
+    $model->deletion_confirmation = $_POST['deletion_confirmation'] ?? '';
+    $model->deletion_reason = $_POST['deletion_reason'] ?? '';
+    $model->deletion_evidence = $_POST['deletion_evidence'] ?? '';
+    $model->deletion_review_token = $_POST['review_token'] ?? '';
+    $model->deletion_review_secret = dtr_delete_review_secret();
+    $model->actor = auth_user();
     echo json_encode(run_unlocked_payroll_mutation(
         $pdoConn,
         (string)$model->client,

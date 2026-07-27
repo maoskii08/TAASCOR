@@ -1,4 +1,5 @@
 <?php
+require_once(__DIR__ . '/../legacy-route-disabled.php');
 session_start();
 require('../config/db_connect.php');
 

@@ -45,7 +45,12 @@ final class SmartEmployeeResolutionService
      * Approve only the cohort that is still safe after a fresh, transaction-
      * scoped shadow evaluation. Any conflicting alias aborts the entire cohort.
      */
-    public function approveSafeCohort(int $batchId, string $reason, string $user): array
+    public function approveSafeCohort(
+        int $batchId,
+        string $reason,
+        string $user,
+        array $selectedSourceKeys = []
+    ): array
     {
         $reason = trim($reason);
         $user = trim($user);
@@ -55,24 +60,67 @@ final class SmartEmployeeResolutionService
         if ($user === '') {
             return ['success' => 0, 'error' => 'An authenticated owner is required.'];
         }
+        $selectedSourceKeys = array_values(array_unique(array_filter(
+            array_map(static fn($value): string => trim((string)$value), $selectedSourceKeys),
+            static fn(string $value): bool => $value !== ''
+        )));
+        if (count($selectedSourceKeys) > 200) {
+            return ['success' => 0, 'error' => 'Select no more than 200 employee mappings at a time.'];
+        }
 
         try {
             $this->assertGovernanceTables();
             $this->db->beginTransaction();
             $resolution = $this->buildResolution($batchId, true);
-            $eligible = array_values(array_filter(
-                $resolution['engine']['results'],
-                static function (array $result): bool {
-                    return ($result['classification'] ?? '') === 'auto_eligible_shadow'
-                        && ($result['match_basis'] ?? '') !== 'approved_alias'
-                        && (int)($result['assigned_employee_id'] ?? 0) > 0;
+            $selectedLookup = array_fill_keys($selectedSourceKeys, true);
+            $eligible = [];
+            foreach ($resolution['engine']['results'] as $result) {
+                $classification = (string)($result['classification'] ?? '');
+                $selected = !$selectedSourceKeys
+                    || isset($selectedLookup[(string)($result['source_key'] ?? '')]);
+                $classificationAllowed = $selectedSourceKeys
+                    ? in_array($classification, ['auto_eligible_shadow', 'review'], true)
+                    : $classification === 'auto_eligible_shadow';
+                $candidate = (array)(($result['candidates'] ?? [])[0] ?? []);
+                $approvalEmployeeId = (int)($result['assigned_employee_id'] ?? 0);
+                if ($approvalEmployeeId <= 0 && $classification === 'review') {
+                    $approvalEmployeeId = (int)($candidate['employee_id'] ?? 0);
                 }
-            ));
+                if (
+                    $selected
+                    && $classificationAllowed
+                    && ($result['match_basis'] ?? '') !== 'approved_alias'
+                    && $approvalEmployeeId > 0
+                ) {
+                    $result['approval_employee_id'] = $approvalEmployeeId;
+                    $eligible[] = $result;
+                }
+            }
+            if ($selectedSourceKeys) {
+                $eligibleKeys = array_fill_keys(array_map(
+                    static fn(array $result): string => (string)$result['source_key'],
+                    $eligible
+                ), true);
+                $invalidSelections = array_values(array_filter(
+                    $selectedSourceKeys,
+                    static fn(string $sourceKey): bool => !isset($eligibleKeys[$sourceKey])
+                ));
+                if ($invalidSelections) {
+                    $this->db->rollBack();
+                    return [
+                        'success' => 0,
+                        'error' => 'One or more selected mappings are no longer eligible. Analyze the batch again before approving.',
+                        'invalid_selection_count' => count($invalidSelections),
+                    ];
+                }
+            }
             if (!$eligible) {
                 $this->db->rollBack();
                 return [
                     'success' => 0,
-                    'error' => 'No collision-free shadow matches are eligible for owner approval.',
+                    'error' => $selectedSourceKeys
+                        ? 'Select at least one eligible proposed mapping.'
+                        : 'No collision-free shadow matches are eligible for owner approval.',
                     'cohort_preview' => $resolution['engine']['cohort_preview'],
                 ];
             }
@@ -85,7 +133,7 @@ final class SmartEmployeeResolutionService
                 if (!is_array($source)) {
                     throw new RuntimeException('The shadow result no longer has a staged source identity.');
                 }
-                $employeeId = (int)$result['assigned_employee_id'];
+                $employeeId = (int)$result['approval_employee_id'];
                 $this->assertEmployeeStillEligible(
                     $employeeId,
                     (int)$resolution['batch']['client_id'],
@@ -99,7 +147,10 @@ final class SmartEmployeeResolutionService
                     $result,
                     $employeeId,
                     $reason,
-                    $user
+                    $user,
+                    ($result['classification'] ?? '') === 'review'
+                        ? 'selected_review_owner_approval'
+                        : 'selected_safe_owner_approval'
                 );
                 if ($outcome === 'approved') {
                     $approved++;
@@ -112,8 +163,9 @@ final class SmartEmployeeResolutionService
             if (function_exists('log_action')) {
                 log_action(
                     sprintf(
-                        'Smart DTR identity cohort approved: batch %d, new %d, existing %d, engine %s',
+                        'Smart DTR identity selections approved: batch %d, selected %d, new %d, existing %d, engine %s',
                         $batchId,
+                        count($eligible),
                         $approved,
                         $alreadyApproved,
                         EmployeeResolutionEngine::VERSION
@@ -127,10 +179,18 @@ final class SmartEmployeeResolutionService
                 'batch_id' => $batchId,
                 'approved_count' => $approved,
                 'already_approved_count' => $alreadyApproved,
-                'review_or_block_count' => count($resolution['engine']['results']) - count($eligible),
+                'selected_count' => count($eligible),
+                'review_or_block_count' => count(array_filter(
+                    $resolution['engine']['results'],
+                    static fn(array $result): bool => in_array(
+                        (string)($result['classification'] ?? ''),
+                        ['review', 'block'],
+                        true
+                    )
+                )),
                 'engine_version' => EmployeeResolutionEngine::VERSION,
                 'message' => sprintf(
-                    '%d safe employee mappings approved; %d were already approved.',
+                    '%d selected employee mappings approved; %d were already approved.',
                     $approved,
                     $alreadyApproved
                 ),
@@ -334,7 +394,8 @@ final class SmartEmployeeResolutionService
         array $result,
         int $employeeId,
         string $reason,
-        string $user
+        string $user,
+        string $decisionType
     ): string {
         $clientId = (int)$resolution['batch']['client_id'];
         $namespace = (string)$resolution['source_namespace'];
@@ -371,7 +432,7 @@ final class SmartEmployeeResolutionService
 
         if (!$activeRows) {
             $decisionUid = $this->uid('IDDEC');
-            $decision = $this->db->prepare("\n                INSERT INTO employee_identity_decisions (\n                    decision_uid, client_id, source_namespace, source_employee_id,\n                    normalized_source_employee_id, employee_id, decision_type,\n                    decision_status, confidence_score, evidence_payload, reason, decided_by\n                ) VALUES (\n                    :decision_uid, :client_id, :source_namespace, :source_employee_id,\n                    :normalized_source_employee_id, :employee_id, 'safe_cohort_owner_approval',\n                    'approved', :confidence_score, :evidence_payload, :reason, :decided_by\n                )\n            ");
+            $decision = $this->db->prepare("\n                INSERT INTO employee_identity_decisions (\n                    decision_uid, client_id, source_namespace, source_employee_id,\n                    normalized_source_employee_id, employee_id, decision_type,\n                    decision_status, confidence_score, evidence_payload, reason, decided_by\n                ) VALUES (\n                    :decision_uid, :client_id, :source_namespace, :source_employee_id,\n                    :normalized_source_employee_id, :employee_id, :decision_type,\n                    'approved', :confidence_score, :evidence_payload, :reason, :decided_by\n                )\n            ");
             $decision->execute([
                 ':decision_uid' => $decisionUid,
                 ':client_id' => $clientId,
@@ -379,6 +440,7 @@ final class SmartEmployeeResolutionService
                 ':source_employee_id' => $sourceId,
                 ':normalized_source_employee_id' => $normalizedId,
                 ':employee_id' => $employeeId,
+                ':decision_type' => $decisionType,
                 ':confidence_score' => round(((float)$result['top_score']) / 100, 6),
                 ':evidence_payload' => json_encode([
                     'engine_version' => EmployeeResolutionEngine::VERSION,
@@ -455,7 +517,7 @@ final class SmartEmployeeResolutionService
 
     private function loadBatch(int $batchId, bool $forUpdate): ?array
     {
-        $stmt = $this->db->prepare("\n            SELECT b.*,\n+                   COALESCE(b.client_id, t.client_id) AS client_id,\n+                   COALESCE(b.location_id, t.location_id) AS location_id,\n+                   t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = COALESCE(b.client_id, t.client_id)\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '')
+        $stmt = $this->db->prepare("\n            SELECT b.*,\n                   COALESCE(b.client_id, t.client_id) AS client_id,\n                   COALESCE(b.location_id, t.location_id) AS location_id,\n                   t.template_name, t.source_type, c.client_name\n            FROM dtr_upload_batches b\n            LEFT JOIN dtr_format_templates t ON t.id = b.template_id\n            LEFT JOIN taascor_client c ON c.client_id = COALESCE(b.client_id, t.client_id)\n            WHERE b.id = :batch_id\n            LIMIT 1" . ($forUpdate ? ' FOR UPDATE' : '')
         );
         $stmt->execute([':batch_id' => $batchId]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);

@@ -8,6 +8,7 @@ class DtrAdapterRegistry
 
     private const PARSERS = [
         'template_tabular_v1',
+        'period_summary_workbook_v1',
         'fuji_payroll_summary_v1',
     ];
 
@@ -393,10 +394,17 @@ class DtrAdapterRegistry
             $mappedCoverage = count($allMappedHeaders) > 0
                 ? $mappedMatches / count($allMappedHeaders)
                 : 0.0;
+            $specializedParser = in_array(
+                $parserKey,
+                ['period_summary_workbook_v1', 'fuji_payroll_summary_v1'],
+                true
+            );
             $confidence = $parserKey === 'fuji_payroll_summary_v1'
                 ? 0.60
-                : round(($requiredCoverage * 0.85) + ($mappedCoverage * 0.15), 6);
-            $eligible = $parserKey === 'fuji_payroll_summary_v1'
+                : ($parserKey === 'period_summary_workbook_v1'
+                    ? 0.70
+                    : round(($requiredCoverage * 0.85) + ($mappedCoverage * 0.15), 6));
+            $eligible = $specializedParser
                 || (count($requiredHeaders) > 0 && $requiredCoverage >= 1.0);
             if (!$eligible) {
                 continue;
@@ -500,6 +508,10 @@ class DtrAdapterRegistry
         $fileType = strtolower((string)($template['file_type'] ?? ''));
         if ($parserKey === 'template_tabular_v1') {
             return in_array($fileType, ['csv', 'xlsx'], true);
+        }
+        if ($parserKey === 'period_summary_workbook_v1') {
+            return $fileType === 'xlsx'
+                && strtolower((string)($template['source_type'] ?? '')) === 'period_summary_workbook';
         }
         if ($parserKey === 'fuji_payroll_summary_v1') {
             return $fileType === 'xlsx'

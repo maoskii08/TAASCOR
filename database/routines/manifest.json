@@ -1,0 +1,20 @@
+{
+  "manifest_version": 1,
+  "captured_at": "2026-07-26",
+  "status": "observed_local_unapproved",
+  "hash_basis": "SHA2(INFORMATION_SCHEMA.ROUTINES.ROUTINE_DEFINITION, 256)",
+  "transaction_contract": "self_committing_without_exception_handler",
+  "application_call_policy": "blocked_until_transaction_neutral_v2",
+  "routines": {
+    "sp_calculate_dtr": "941ef6b3457a7e4c1539b7a0452817ad1d66417390e91a0bc6366c1f8ea9c28a",
+    "sp_calculate_dtr_weekly": "1db0744a0fa7c6b242774a441c91d92b831168955d9e64933ac531633243c825",
+    "sp_calculate_indv_dtr": "da76ad4baf16c8a00566909b55a395210bebb2c626d186ba4e2cf3086992f17c",
+    "sp_calculate_indv_dtr_weekly": "ec454a1644cf02822fcf14902ccfe1fdc134749c92c87a0492ee4e581ed2373b",
+    "sp_delete_additional_deduction": "54a442b46e5a64f55135307cced282ad1884ec84224cdac0e2988722aee078d6",
+    "sp_payroll_additional": "c74bc887084ea4e3c50a636702031292e2d2a53831d4223407e9500d76988c0e",
+    "sp_payroll_additional_indv": "9f2409f441eb6684a2b12718e766fef8f85a50f9dc744842de1de0e72ddbdc2d",
+    "sp_payroll_deduction": "380b4cb4bdf8d4a44e52401a44ce10232a4aaa1645f2976ce2598a042cbc719a",
+    "sp_payroll_deduction_indv": "d6ee6dcb6c111ea46b6f64e6c5ebea381dd3034f5b4b1c630b3a1fb60e8ff62f",
+    "sp_transfer_employee_data": "2a0a1507a5dbe4a84732d8b4d1a927dbf8ff7a969510c641ccb90ef5b97b86cc"
+  }
+}

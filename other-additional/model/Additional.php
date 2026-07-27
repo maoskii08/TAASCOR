@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/../../dtr-upload/model/PayrollLockGuard.php';
+require_once __DIR__ . '/../../includes/payroll_adjustment_guard.php';
 class Additional
 {
     public $db = null;
@@ -21,46 +22,32 @@ class Additional
     public $branch = null;
 
     public function spDeleteAdditional(){
-            
-        try {
-        $sql = "CALL sp_delete_additional_deduction(:client_name, :pay_day, :cut_off, :employee_id)";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute([':client_name' => $this->client_name, ':pay_day' => $this->pay_day, ':cut_off' => $this->cut_off, ':employee_id' => $this->employee_id]);
-
-        $response = array(
-            "success" => 1
+        return PayrollAdjustmentGuard::recalculateScope(
+            $this->db,
+            [
+                'client_name' => $this->client_name,
+                'cut_off' => $this->cut_off,
+                'pay_day' => $this->pay_day,
+                'start_date' => $this->start_date,
+                'end_date' => $this->end_date,
+            ],
+            [(int)$this->employee_id]
         );
-
-        } catch (PDOException $e) {
-            error_log('Additional::spDeleteAdditional failed: ' . $e->getMessage());
-            $response = array(
-                "success" => 0,
-                "error" => "Unable to recalculate payroll additions."
-            );
-        }
-        return $response;
     }
 
 
     public function spIndividualAdditional(){
-            
-        try {
-        $sql = "CALL sp_payroll_additional_indv(:client_name, :pay_day, :cut_off, :employee_id)";
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute([':client_name' => $this->client_name, ':pay_day' => $this->pay_day, ':cut_off' => $this->cut_off, ':employee_id' => $this->employee_id]);
-
-        $response = array(
-            "success" => 1
+        return PayrollAdjustmentGuard::recalculateScope(
+            $this->db,
+            [
+                'client_name' => $this->client_name,
+                'cut_off' => $this->cut_off,
+                'pay_day' => $this->pay_day,
+                'start_date' => $this->start_date,
+                'end_date' => $this->end_date,
+            ],
+            [(int)$this->employee_id]
         );
-
-        } catch (PDOException $e) {
-            error_log('Additional::spIndividualAdditional failed: ' . $e->getMessage());
-            $response = array(
-                "success" => 0,
-                "error" => "Unable to recalculate payroll additions."
-            );
-        }
-        return $response;
     }
 
     public function getAdditionalList(){
@@ -70,38 +57,54 @@ class Additional
         try {
             $where = "";
             $filterParams = [];
+            $locationId = PayrollAdjustmentGuard::filterIdOrNull($this->client_location, 'client location');
+            $branchId = PayrollAdjustmentGuard::filterIdOrNull($this->branch, 'branch');
 
-            if($this->client_location != 'null'){
+            if($locationId !== null){
                 $where .= " AND b.client_location_id = :client_location_id";
-                $filterParams[':client_location_id'] = (int)$this->client_location;
+                $filterParams[':client_location_id'] = $locationId;
             }
 
-            if($this->branch != 'null'){
+            if($branchId !== null){
                 $where .= " AND b.branch_id = :branch_id";
-                $filterParams[':branch_id'] = (int)$this->branch;
+                $filterParams[':branch_id'] = $branchId;
             }
 
             $sql = "SELECT c.id,
                         a.employee_id,
-                        CONCAT(b.last_name, ', ', b.first_name) AS employee_full_name,
-                        amount,
-                        type_of_addition
-                    FROM payroll_gross_variables a
+                        COALESCE(NULLIF(b.full_name, ''), CONCAT(b.last_name, ', ', b.first_name)) AS employee_full_name,
+                        c.amount,
+                        c.type_of_addition
+                    FROM (
+                        SELECT DISTINCT client_name, pay_day, cut_off, employee_id, start_date, end_date
+                        FROM dtr_upload
+                        WHERE client_name = :client
+                          AND cut_off = :cut_off
+                          AND pay_day = :pay_day
+                          AND start_date = :start_date
+                          AND end_date = :end_date
+                    ) a
                     INNER JOIN employee_list b ON a.employee_id = b.employee_id
+                    INNER JOIN taascor_client tc
+                        ON tc.client_id = b.client_id
+                       AND tc.client_name = a.client_name
+                       AND tc.is_active = 1
                     LEFT JOIN payroll_other_additional c ON a.employee_id = c.employee_id
                                     AND c.client_name = a.client_name
                                     AND c.cut_off = a.cut_off
                                     AND c.pay_day = a.pay_day
+                                    AND c.start_date = a.start_date
+                                    AND c.end_date = a.end_date
                     WHERE b.status = 'Active' 
-                        AND a.client_name = :client
-                        AND a.cut_off = :cut_off
-                        AND a.pay_day = :pay_day
-                        $where";
+                        $where
+                    ORDER BY employee_full_name, c.id";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
             $stmt->bindParam(':cut_off', $this->cut_off, PDO::PARAM_STR);
             $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
+            $stmt->bindParam(':start_date', $this->start_date, PDO::PARAM_STR);
+            $stmt->bindParam(':end_date', $this->end_date, PDO::PARAM_STR);
             foreach ($filterParams as $name => $value) { $stmt->bindValue($name, $value, PDO::PARAM_INT); }
             $stmt->execute();
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -160,12 +163,17 @@ class Additional
             $stmt->bindParam(':start_date', $this->start_date, PDO::PARAM_STR);
             $stmt->bindParam(':end_date', $this->end_date, PDO::PARAM_STR);
             $stmt->execute();
+            $insertedId = (int)$this->db->lastInsertId();
+            if ($stmt->rowCount() !== 1 || $insertedId < 1) {
+                throw new RuntimeException('The inserted addition could not be identified.');
+            }
 
             $response = array(
-                "success" => 1
+                "success" => 1,
+                "inserted_id" => $insertedId
             );
 
-        } catch (PDOException $e) {
+        } catch (Throwable $e) {
             $response['success'] = 0;
                         $response['error'] = "An error occurred. Please contact your administrator.";
         }
@@ -179,17 +187,50 @@ class Additional
         
         try{   
 
-            $sql = "DELETE FROM payroll_other_additional
-                    WHERE id = :id AND client_name = :client_name AND pay_day = :pay_day";
-            $stmt = $this->db->prepare($sql);
-            $stmt->bindParam(':id', $this->id, PDO::PARAM_INT);
-            $stmt->bindParam(':client_name', $this->client_name, PDO::PARAM_STR);
-            $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
-            $stmt->execute();
-
-            $response = array(
-                "success" => 1
+            $scopeSql = " FROM payroll_other_additional
+                    WHERE id = :id
+                      AND employee_id = :employee_id
+                      AND client_name = :client_name
+                      AND cut_off = :cut_off
+                      AND pay_day = :pay_day
+                      AND start_date = :start_date
+                      AND end_date = :end_date";
+            $params = [
+                ':id' => $this->id,
+                ':employee_id' => $this->employee_id,
+                ':client_name' => $this->client_name,
+                ':cut_off' => $this->cut_off,
+                ':pay_day' => $this->pay_day,
+                ':start_date' => $this->start_date,
+                ':end_date' => $this->end_date,
+            ];
+            $snapshotStmt = $this->db->prepare(
+                "SELECT id, employee_id, amount, type_of_addition{$scopeSql} FOR UPDATE"
             );
+            $snapshotStmt->execute($params);
+            $snapshot = $snapshotStmt->fetch(PDO::FETCH_ASSOC);
+            if (!$snapshot) {
+                return [
+                    "success" => 0,
+                    "code" => "adjustment_not_found",
+                    "error" => "The selected addition no longer exists in this payroll scope.",
+                ];
+            }
+
+            $stmt = $this->db->prepare("DELETE{$scopeSql}");
+            $stmt->execute($params);
+
+            $response = $stmt->rowCount() === 1
+                ? [
+                    "success" => 1,
+                    "deleted_adjustment" => [
+                        "adjustment_id" => (int)$snapshot['id'],
+                        "employee_id" => (int)$snapshot['employee_id'],
+                        "amount" => number_format((float)$snapshot['amount'], 2, '.', ''),
+                        "type" => (string)$snapshot['type_of_addition'],
+                    ],
+                ]
+                : ["success" => 0, "code" => "adjustment_not_found", "error" => "The selected addition no longer exists in this payroll scope."];
 
         } catch (PDOException $e) {
             $response['success'] = 0;
@@ -243,7 +284,7 @@ class Additional
                             cut_off,
                             pay_day as pay_date
                         FROM dtr_upload 
-                        WHERE client_name = :client1
+                        WHERE client_name = :client_dtr
 
                         UNION ALL
                         SELECT * FROM (
@@ -317,7 +358,7 @@ class Additional
                                         ), '%Y-%m-%d')
                                 END AS pay_date
                             FROM client_payday 
-                            WHERE client_name = :client1
+                            WHERE client_name = :client_schedule
                         ) AS adjusted_paydays
                         WHERE pay_date >= curdate()  -- Only future pay days
                         ORDER BY pay_date ASC
@@ -325,8 +366,8 @@ class Additional
                     ) AS final_result ORDER BY pay_date DESC";
 
             $stmt = $this->db->prepare($sql);
-            $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
-            $stmt->bindParam(':client1', $this->client, PDO::PARAM_STR);
+            $stmt->bindParam(':client_dtr', $this->client, PDO::PARAM_STR);
+            $stmt->bindParam(':client_schedule', $this->client, PDO::PARAM_STR);
             $stmt->execute();
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -354,7 +395,9 @@ class Additional
         $response = [];
 
         try {
-            $sql = "SELECT distinct client_name from taascor_client
+            $sql = "SELECT DISTINCT client_name FROM taascor_client
+                    WHERE is_active = 1
+                      AND client_name <> 'No Client'
                     order by client_name";
 
             $stmt = $this->db->prepare($sql);
@@ -384,11 +427,14 @@ class Additional
         $response = [];
 
         try {
-            $sql = "SELECT distinct location_id, location_name from employee_list a 
-                    inner join taascor_client b on a.client_id = b.client_id
-                    inner join taascor_client_location c on a.client_location_id = c.location_id
-                    WHERE client_name = :client
-                    order by location_name";
+            $sql = "SELECT DISTINCT c.location_id, c.location_name
+                    FROM employee_list a
+                    INNER JOIN taascor_client b ON a.client_id = b.client_id
+                    INNER JOIN taascor_client_location c ON a.client_location_id = c.location_id
+                    WHERE b.client_name = :client
+                      AND b.is_active = 1
+                      AND a.status = 'Active'
+                    ORDER BY c.location_name";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);
@@ -418,11 +464,14 @@ class Additional
         $response = [];
 
         try {
-            $sql = "SELECT distinct a.branch_id, branch_name from employee_list a 
-                    inner join taascor_branch b on a.branch_id = b.branch_id
-                    inner join taascor_client c on a.client_id = c.client_id
-                    WHERE client_name = :client
-                    order by branch_name";
+            $sql = "SELECT DISTINCT a.branch_id, b.branch_name
+                    FROM employee_list a
+                    INNER JOIN taascor_branch b ON a.branch_id = b.branch_id
+                    INNER JOIN taascor_client c ON a.client_id = c.client_id
+                    WHERE c.client_name = :client
+                      AND c.is_active = 1
+                      AND a.status = 'Active'
+                    ORDER BY b.branch_name";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':client', $this->client, PDO::PARAM_STR);

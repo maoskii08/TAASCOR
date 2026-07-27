@@ -11,40 +11,7 @@ class Import{
   public $pay_day = null;
 
   public function spCalculateDTR(){
-        
-    try {
-      $sql = "CALL sp_calculate_dtr(
-                    :client_name
-                    ,:pay_day
-                    ,:cut_off
-              )";
-      if($this->cut_off == 'Weekly'){
-        $sql = "CALL sp_calculate_dtr_weekly(
-          :client_name
-          ,:pay_day
-          ,:cut_off
-        )";
-      }
-      $stmt = $this->db->prepare($sql);
-      $stmt->bindParam(':client_name', $this->client_name, PDO::PARAM_STR);
-      $stmt->bindParam(':pay_day', $this->pay_day, PDO::PARAM_STR);
-      $stmt->bindParam(':cut_off', $this->cut_off, PDO::PARAM_STR);
-      $stmt->execute();
-
-      $response = array(
-        "success" => 1
-      );
-
-    } catch (PDOException $e) {
-      error_log('Import::spCalculateDTR failed: ' . $e->getMessage());
-      $response = array(
-        "success" => 0,
-        "message" => "Unable to calculate DTR."
-      );
- 
-    }
-
-    return $response;
+    return $this->legacyWorkbookImportQuarantine();
   }
 
   public function validate(){
@@ -237,52 +204,18 @@ class Import{
   }
 
   public function add(array $data, $columnMap){
-    try {
-      $scope = $this->validatedPayrollScope();
-      if(($scope['success'] ?? 0) !== 1){
-        return $scope;
-      }
-      $this->payrollDetails = [[
-        $scope['client_name'],
-        $scope['cut_off'],
-        $scope['pay_day'],
-        $scope['start_date'],
-        $scope['end_date'],
-      ]];
-      $identity = $this->resolveEmployeeIdentitiesForImport($data, $columnMap);
-      if(($identity['success'] ?? 0) !== 1){
-        return $identity;
-      }
-      $data = $identity['data'];
-      $this->db->beginTransaction();
+    return $this->legacyWorkbookImportQuarantine();
+  }
 
-      $columnMap = $columnMap;
-      foreach ($data as $value) {
-        
-        $insert= $this->insertToDatabase($columnMap, $value); 
-          if($insert['success'] == 0){
-            $this->db->rollBack();
-            $response['success'] = 0;
-            $response['message'] = 'Insert Syntax Error!';
-            $response['error'] = $insert['message'];
-            return $response;
-            exit();
-          }
-
-      }
-        
-      $this->db->commit();
-      $response['success'] = 1;
-      $response['message'] = 'Success';
-    } catch (Throwable $e) {
-      if($this->db->inTransaction()){
-        $this->db->rollBack();
-      }
-      error_log('Import::add failed: ' . $e->getMessage());
-      $response['success'] = 0;
-      $response['error'] = "An error occurred. Please contact your administrator.";
-    }
-    return $response;
+  private function legacyWorkbookImportQuarantine(): array
+  {
+    return [
+      'success' => 0,
+      'code' => 'legacy_dtr_workbook_import_quarantined',
+      'error' => 'The legacy browser-batched DTR workbook import is permanently quarantined.',
+      'mutation_blocked' => true,
+      'recovery_route' => '../dtr-format-engine/',
+    ];
   }
 
   public function validatedPayrollScope(): array
@@ -505,7 +438,7 @@ class Import{
     return date('Y-m-d');
   }
 
-  public function insertToDatabase($columnMap, $column_data){
+  private function insertToDatabase($columnMap, $column_data){
     try {
       $date_now = date("Y-m-d H:i:s", time());
       $columnMap_key = array_keys($columnMap);
@@ -707,7 +640,7 @@ class Import{
   }
 
 
-  public function deleteInvalid()
+  private function deleteInvalid()
   {
       $response = [];
       

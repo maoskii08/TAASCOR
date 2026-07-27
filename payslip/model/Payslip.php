@@ -18,6 +18,8 @@ class Payslip
     public $branch = null;
     public $actor = null;
     public $run_id = null;
+    public array $allowed_client_ids = [];
+    public bool $allow_all_clients = false;
 
     public $cutoffArray = array();
 
@@ -375,6 +377,11 @@ class Payslip
     public function postPayroll(){
 
         $response = [];
+        $preflightGate = $this->releaseGate();
+        if (($preflightGate['success'] ?? 0) !== 1) {
+            return $preflightGate;
+        }
+
         $lockGuard = new PayrollLockGuard($this->db);
         $lease = $lockGuard->acquireMutationLease((string)$this->client, (string)$this->pay_day, 10);
         if (($lease['success'] ?? 0) !== 1) {
@@ -520,13 +527,16 @@ class Payslip
 
     public function releaseGate(bool $lockRows = false): array
     {
+        $releaseContext = [
+            'release_attempt' => true,
+            'actor' => (string)$this->actor,
+        ];
         try {
             if (!$this->tableExists('payroll_import_runs')
                 || !$this->tableExists('payroll_import_client_settings')) {
-                return payroll_release_gate_policy([
+                return payroll_release_gate_policy(array_merge($releaseContext, [
                     'smart_run_schema_exists' => false,
-                    'actor' => (string)$this->actor,
-                ]);
+                ]));
             }
 
             $enrollment = $this->db->prepare("\n                SELECT COALESCE(s.smart_flow_enabled, 0)
@@ -538,19 +548,31 @@ class Payslip
             $enrollment->execute([':client_name' => $this->client]);
             $smartFlowEnrolled = (int)$enrollment->fetchColumn() === 1;
             if (!$smartFlowEnrolled) {
-                return payroll_release_gate_policy([
+                return payroll_release_gate_policy(array_merge($releaseContext, [
                     'smart_run_schema_exists' => true,
                     'smart_flow_enrolled' => false,
-                    'actor' => (string)$this->actor,
-                ]);
+                ]));
             }
+
+            $payrollRows = $this->db->prepare(
+                'SELECT COUNT(*) FROM payroll_summary '
+                . 'WHERE client_name = :client_name AND pay_day = :pay_day'
+            );
+            $payrollRows->execute([
+                ':client_name' => (string)$this->client,
+                ':pay_day' => (string)$this->pay_day,
+            ]);
+            $livePayrollRowCount = (int)$payrollRows->fetchColumn();
 
             if (!$this->tableExists('payroll_import_release_checks')
                 || !$this->tableExists('payroll_import_payslip_artifacts')
                 || !$this->tableExists('payroll_import_outbox')
                 || !$this->tableExists('payroll_import_legacy_scope_bindings')
                 || !$this->tableExists('payroll_import_release_locks')) {
-                return payroll_release_gate_blocked(['smart_run_schema_incomplete']);
+                return payroll_release_gate_blocked(
+                    ['smart_run_schema_incomplete'],
+                    array_merge($releaseContext, ['smart_flow_enrolled' => true])
+                );
             }
 
             $runId = (int)$this->run_id;
@@ -566,7 +588,10 @@ class Payslip
                 $runId = (int)$releasedRun->fetchColumn();
             }
             if ($runId <= 0) {
-                $blocked = payroll_release_gate_blocked(['authoritative_run_selection_required']);
+                $blocked = payroll_release_gate_blocked(
+                    ['authoritative_run_selection_required'],
+                    array_merge($releaseContext, ['smart_flow_enrolled' => true])
+                );
                 $blocked['smart_flow_enrolled'] = true;
                 $blocked['candidates'] = $this->smartRunCandidates();
                 return $blocked;
@@ -644,17 +669,19 @@ class Payslip
                 $runs[0] = $this->verifyRunSeals($runs[0]);
             }
 
-            return payroll_release_gate_policy([
+            return payroll_release_gate_policy(array_merge($releaseContext, [
                 'smart_run_schema_exists' => true,
                 'smart_flow_enrolled' => true,
                 'authoritative_run_id' => $runId,
-                'release_attempt' => $lockRows,
-                'actor' => (string)$this->actor,
+                'live_payroll_row_count' => $livePayrollRowCount,
                 'runs' => $runs,
-            ]);
+            ]));
         } catch (Throwable $error) {
             error_log('Payslip::releaseGate failed: ' . $error->getMessage());
-            return payroll_release_gate_blocked(['smart_run_gate_check_failed']);
+            return payroll_release_gate_blocked(
+                ['smart_run_gate_check_failed'],
+                $releaseContext
+            );
         }
     }
 
@@ -1188,11 +1215,26 @@ class Payslip
         $response = [];
 
         try {
-            $sql = "SELECT distinct client_name from taascor_client
-                    order by client_name";
+            $params = [];
+            $where = '';
+            if (!$this->allow_all_clients) {
+                if ($this->allowed_client_ids === []) {
+                    return ['success' => 1, 'data' => []];
+                }
+                $placeholders = [];
+                foreach (array_values($this->allowed_client_ids) as $index => $clientId) {
+                    $name = ':client_scope_' . $index;
+                    $placeholders[] = $name;
+                    $params[$name] = (int)$clientId;
+                }
+                $where = ' WHERE client_id IN (' . implode(',', $placeholders) . ')';
+            }
+            $sql = "SELECT DISTINCT client_name FROM taascor_client"
+                . $where
+                . " ORDER BY client_name";
 
             $stmt = $this->db->prepare($sql);
-            $stmt->execute();
+            $stmt->execute($params);
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
             $response['success'] = 1;

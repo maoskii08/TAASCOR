@@ -13,13 +13,41 @@ function check(bool $condition, string $message): void
 }
 
 $legacy = payroll_release_gate_policy(['smart_run_schema_exists' => false]);
-check(($legacy['success'] ?? 0) === 1 && ($legacy['mode'] ?? '') === 'legacy', 'legacy posting remains available without smart-run schema');
+check(
+    ($legacy['success'] ?? 1) === 0
+        && in_array('smart_run_schema_required', $legacy['blocking_reasons'] ?? [], true)
+        && ($legacy['mode'] ?? '') === 'legacy_preview'
+        && ($legacy['preview_allowed'] ?? false) === true,
+    'missing smart-run schema blocks posting but explicitly permits unverified legacy preview'
+);
 
 $notEnrolled = payroll_release_gate_policy(['smart_run_schema_exists' => true, 'smart_flow_enrolled' => false]);
-check(($notEnrolled['success'] ?? 0) === 1 && ($notEnrolled['mode'] ?? '') === 'legacy', 'installing smart tables does not cut over unenrolled clients');
+check(
+    ($notEnrolled['success'] ?? 1) === 0
+        && in_array('smart_payroll_enrollment_required', $notEnrolled['blocking_reasons'] ?? [], true)
+        && ($notEnrolled['mode'] ?? '') === 'legacy_preview'
+        && ($notEnrolled['preview_policy'] ?? '') === 'unverified_legacy_non_distributable',
+    'unenrolled clients fail closed for posting while retaining explicit legacy preview'
+);
 
-$missing = payroll_release_gate_policy(['smart_run_schema_exists' => true, 'smart_flow_enrolled' => true]);
+$missing = payroll_release_gate_policy([
+    'smart_run_schema_exists' => true,
+    'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 1,
+]);
 check(($missing['success'] ?? 1) === 0 && in_array('authoritative_run_selection_required', $missing['blocking_reasons'], true), 'enrolled client without an explicit run fails closed');
+
+$empty = payroll_release_gate_policy([
+    'smart_run_schema_exists' => true,
+    'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 0,
+    'authoritative_run_id' => 19,
+]);
+check(
+    ($empty['success'] ?? 1) === 0
+        && in_array('payroll_scope_empty', $empty['blocking_reasons'] ?? [], true),
+    'zero-row payroll scope fails closed'
+);
 
 $readyRun = [
     'id' => 19,
@@ -56,18 +84,27 @@ $readyRun = [
 $ready = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
-    'actor' => 'checker.user',
+    'actor' => 'release.user',
     'runs' => [$readyRun],
 ]);
-check(($ready['success'] ?? 0) === 1 && ($ready['mode'] ?? '') === 'smart_run', 'fully approved smart run opens release gate');
+check(
+    ($ready['success'] ?? 0) === 1
+        && ($ready['mode'] ?? '') === 'smart_run'
+        && ($ready['release_attempt'] ?? false) === true
+        && ($ready['release_actor'] ?? '') === 'release.user'
+        && ($ready['release_actor_verified'] ?? false) === true,
+    'fully approved smart run opens the actor-aware release gate for an independent release actor'
+);
 
 $sameUser = $readyRun;
 $sameUser['checker_approved_by'] = 'maker.user';
 $blocked = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
     'actor' => 'maker.user',
@@ -75,15 +112,52 @@ $blocked = payroll_release_gate_policy([
 ]);
 check(in_array('run:RUN-19:maker_checker_same_user', $blocked['blocking_reasons'], true), 'maker cannot approve and release the same run');
 
-$wrongActor = payroll_release_gate_policy([
+$checkerActor = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
+    'authoritative_run_id' => 19,
+    'release_attempt' => true,
+    'actor' => ' CHECKER.USER ',
+    'runs' => [$readyRun],
+]);
+check(
+    ($checkerActor['success'] ?? 1) === 0
+        && in_array('run:RUN-19:release_actor_is_checker', $checkerActor['blocking_reasons'], true)
+        && ($checkerActor['release_attempt'] ?? false) === true
+        && ($checkerActor['release_actor'] ?? '') === 'CHECKER.USER'
+        && ($checkerActor['release_actor_verified'] ?? true) === false,
+    'the recorded checker cannot release the run in browser preflight or transaction recheck'
+);
+
+$independentActor = payroll_release_gate_policy([
+    'smart_run_schema_exists' => true,
+    'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
     'actor' => 'another.user',
     'runs' => [$readyRun],
 ]);
-check(in_array('run:RUN-19:release_actor_not_checker', $wrongActor['blocking_reasons'], true), 'only the recorded checker may post the approved run');
+check(
+    ($independentActor['success'] ?? 0) === 1
+        && ($independentActor['release_actor_verified'] ?? false) === true,
+    'an authenticated actor independent from the recorded checker may release the approved run'
+);
+
+$missingActor = payroll_release_gate_policy([
+    'smart_run_schema_exists' => true,
+    'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
+    'authoritative_run_id' => 19,
+    'release_attempt' => true,
+    'actor' => '',
+    'runs' => [$readyRun],
+]);
+check(
+    in_array('run:RUN-19:release_actor_missing', $missingActor['blocking_reasons'], true),
+    'release preflight fails closed when the authenticated actor is missing'
+);
 
 $unreconciled = $readyRun;
 $unreconciled['reconciliation_status'] = 'failed';
@@ -91,9 +165,10 @@ $unreconciled['ready_artifact_count'] = 690;
 $blocked = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
-    'actor' => 'checker.user',
+    'actor' => 'release.user',
     'runs' => [$unreconciled],
 ]);
 check(in_array('run:RUN-19:reconciliation_not_passed', $blocked['blocking_reasons'], true), 'failed reconciliation blocks posting');
@@ -104,9 +179,10 @@ $tamperedArtifact['artifact_files_verified'] = false;
 $blocked = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
-    'actor' => 'checker.user',
+    'actor' => 'release.user',
     'runs' => [$tamperedArtifact],
 ]);
 check(
@@ -120,9 +196,10 @@ $checksPending['passed_mandatory_check_count'] = 7;
 $blocked = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
     'smart_flow_enrolled' => true,
+    'live_payroll_row_count' => 691,
     'authoritative_run_id' => 19,
     'release_attempt' => true,
-    'actor' => 'checker.user',
+    'actor' => 'release.user',
     'runs' => [$checksPending],
 ]);
 check(in_array('run:RUN-19:blocking_checks_not_passed', $blocked['blocking_reasons'], true), 'every blocking release check must pass');

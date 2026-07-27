@@ -1,3 +1,8 @@
+<?php
+require_once('../includes/session_security.php');
+taascor_start_secure_session();
+require_once('../includes/csrf.php');
+?>
 <!doctype html>
 <html lang="en">
 <head>
@@ -43,6 +48,7 @@
 
 <script src="../assets/vendor/libs/jquery/jquery.js"></script>
 <script>
+var csrfToken = <?= json_encode(csrf_token()) ?>;
 $('#btnSend').on('click', function () {
     var username = $('#usernameInput').val().trim();
     if (!username) { showAlert('danger', 'Please enter your username.'); return; }
@@ -50,7 +56,7 @@ $('#btnSend').on('click', function () {
     $('#btnSend').prop('disabled', true).html('<i class="bx bx-loader-alt bx-spin me-1"></i> Sending...');
 
     $.post('controller/ForgotPasswordController.php',
-        { request: 'forgot-password', username: username },
+        { request: 'forgot-password', username: username, csrf_token: csrfToken },
         function (r) {
             if (r.success) {
                 $('#formSection').hide();

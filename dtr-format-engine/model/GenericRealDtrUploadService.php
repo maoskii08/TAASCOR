@@ -53,6 +53,8 @@ class GenericRealDtrUploadService
             $parserKey = (string)$profile['parser_key'];
             if ($parserKey === 'template_tabular_v1') {
                 $result = $this->tabularParser->uploadReal($post, $file, $user, $profile);
+            } elseif ($parserKey === 'period_summary_workbook_v1') {
+                $result = $this->tabularParser->uploadPeriodSummary($post, $file, $user, $profile);
             } elseif ($parserKey === 'fuji_payroll_summary_v1') {
                 $result = $this->fujiAdapter->stageUpload($post, $file, $user, $profile);
             } else {

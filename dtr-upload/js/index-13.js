@@ -18,7 +18,6 @@ document.getElementById('filterBtn').addEventListener("click", getDTRList);
 document.getElementById('saveChanges').addEventListener("click", saveChanges);
 
 $( document ).ready(function() {
-    importExcel();
     getClientFilter();
 });
 
@@ -90,7 +89,7 @@ $("#proceedBtn").click(function() {
     formdata.append("request", "validate-manual-dates");
     formdata.append("client", client);
     formdata.append("cut_off", cut_off);
-    formdata.append("pay_day", pay_day);
+    formdata.append("pay_day", m_pay_date);
 
     $.ajax({
         url: 'controller/DTRController.php',
@@ -101,8 +100,8 @@ $("#proceedBtn").click(function() {
         contentType: false,
         processData: false,
         beforeSend: function( xhr ) {
-            $('#saveBtn').html('Validating... <i class="fa fa-spinner fa-spin"></i>');
-            $('#saveBtn').attr('disabled',true);
+            $('#proceedBtn').html('Validating... <i class="fa fa-spinner fa-spin"></i>');
+            $('#proceedBtn').attr('disabled',true);
         },
         success: function (response) { 
             if(!response.exists){
@@ -116,8 +115,6 @@ $("#proceedBtn").click(function() {
                 return false;
             }
 
-            $('#saveBtn').html('Proceed');
-            $('#saveBtn').attr('disabled',false);
             $("#dateModal").modal("hide");
 
             validPayDates = true;
@@ -126,6 +123,10 @@ $("#proceedBtn").click(function() {
                 icon: 'success',   
                 title: 'Dates are set. Click the Filter Button'       
             });
+        },
+        complete: function () {
+            $('#proceedBtn').html('Proceed');
+            $('#proceedBtn').attr('disabled',false);
         }
     });
 });
@@ -140,52 +141,73 @@ function clearFilter() {
     // getClientFilter();
 }
 
-function importExcel() {
-    var obj = {};
-
-    for (let i = 0; i < file_data['columns'].length; i++) {
-        var xcl = [];
-        col = file_data['columns'][i].toLowerCase();
-        
-        xcl = [file_data['columns'][i], col] 
-            
-        obj[col] = xcl;
+$(document).on("click","#dtrTbl .js-remove-benefits",function() {
+    if (!payrollDetails.length) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Payroll scope unavailable',
+            text: 'Select a client and pay date again before changing government benefits.'
+        });
+        return;
     }
-
-    // console.log(obj)
-
-    new ExcelImport({
-        maxInAGroup: 100,
-        serverColumnNames: file_data['columns'],
-        importTypeSelector: "#dataType",
-        fileChooserSelector: "#fileUploader",
-        outputSelector: "#tableOutput",
-        extraData: {
-            importID: 0,
-            cmd: "batch_upload",
-            obj
-        }
-    });
-}
-
-$(document).on("click","#dtrTbl #removeBenBtn",function() {
     employeeID = $(this).val();
+    let client_name = payrollDetails[0][0];
+    let cut_off = payrollDetails[0][1];
     let pay_day = payrollDetails[0][2];
+    let phrase = 'REMOVE BENEFITS ' + employeeID + ' ' + client_name + ' ' + pay_day + ' ' + cut_off;
 
     Swal.fire({
-        title: 'Are you sure you want to remove the govt contributions for employee - '+employeeID+'?', 
-        html: 'Click Yes to proceed.',
-        icon: 'warning',  
+        title: 'Review government-benefits removal',
+        html:
+            '<div class="text-start mb-3">'
+            + '<div><strong>Employee:</strong> ' + dtrEscapeHtml(employeeID) + '</div>'
+            + '<div><strong>Client:</strong> ' + dtrEscapeHtml(client_name) + '</div>'
+            + '<div><strong>Pay date:</strong> ' + dtrEscapeHtml(formatDate(pay_day)) + '</div>'
+            + '<div><strong>Cutoff:</strong> ' + dtrEscapeHtml(cut_off) + '</div>'
+            + '</div>'
+            + '<label class="form-label d-block text-start">Business reason</label>'
+            + '<textarea id="dtr-benefits-reason" class="form-control mb-3" maxlength="500" '
+            + 'placeholder="Explain the approved payroll correction"></textarea>'
+            + '<label class="form-label d-block text-start">Evidence reference</label>'
+            + '<input id="dtr-benefits-evidence" class="form-control mb-3" maxlength="500" '
+            + 'placeholder="Approval ID, ticket, source file, or controlled record">'
+            + '<label class="form-label d-block text-start">Type <code>'
+            + dtrEscapeHtml(phrase) + '</code> to confirm</label>'
+            + '<input id="dtr-benefits-confirmation" class="form-control" autocomplete="off">',
+        icon: 'warning',
         showCancelButton: true,
-        confirmButtonText: `Yes`,
-        denyButtonText: `Cancel`,
+        confirmButtonText: 'Remove and audit benefits',
+        confirmButtonColor: '#dc3545',
+        focusConfirm: false,
+        preConfirm: function () {
+            let reason = String($('#dtr-benefits-reason').val() || '').trim();
+            let evidence = String($('#dtr-benefits-evidence').val() || '').trim();
+            let confirmation = String($('#dtr-benefits-confirmation').val() || '').trim();
+            if (reason.length < 10) {
+                Swal.showValidationMessage('Enter a business reason of at least 10 characters.');
+                return false;
+            }
+            if (evidence.length < 3) {
+                Swal.showValidationMessage('Enter a traceable evidence reference.');
+                return false;
+            }
+            if (confirmation !== phrase) {
+                Swal.showValidationMessage('The typed confirmation does not match the employee payroll scope.');
+                return false;
+            }
+            return { reason: reason, evidence: evidence, confirmation: confirmation };
+        }
     }).then((result) => {
-        if (result.value) {
+        if (result.isConfirmed && result.value) {
             let formdata = new FormData();
             formdata.append("request", 'remove-govt-benefits');
             formdata.append("employee_ident", employeeID);
-            formdata.append("client_name", payrollDetails[0][0]);
+            formdata.append("client_name", client_name);
             formdata.append("pay_day", pay_day);
+            formdata.append("cut_off", cut_off);
+            formdata.append("change_reason", result.value.reason);
+            formdata.append("change_evidence", result.value.evidence);
+            formdata.append("benefits_confirmation", result.value.confirmation);
             
             $.ajax({
                 url: 'controller/DTRController.php',
@@ -197,22 +219,27 @@ $(document).on("click","#dtrTbl #removeBenBtn",function() {
                 processData: false
                 })
                 .done(function (response) {
+                    let auditEvidenceLink = dtrAuditEvidenceLink(response.audit_event);
 
-                    if(response.success == 1){
+                    if(response.success == 1 && response.audit_recorded && auditEvidenceLink){
 
                         swal.fire({
                             icon: 'success',   
-                            title: 'Successfully Removed Govt Contributions! '        
+                            title: 'Government benefits removed and audited',
+                            html: dtrAuditedSuccessHtml(
+                                'The exact employee payroll scope was changed and the evidence was recorded.',
+                                response.audit_event
+                            )
+                        }).then(function () {
+                            getDTRList();
                         });
 
                     }else{
 
                         swal.fire({
                             icon: 'error',   
-                            title: 'Something went wrong!',                 
-                            text: "Error Message: " + response.error + ""               
-                        }).then(function (result) {
-                            window.location.reload()
+                            title: 'Government-benefits change rolled back',
+                            text: response.error || 'The change could not be completed and audited.'
                         });
                     }
                 
@@ -220,10 +247,10 @@ $(document).on("click","#dtrTbl #removeBenBtn",function() {
                 .fail(function (response) {
                     swal.fire({
                         icon: 'error',   
-                        title: 'Something went wrong!',                 
-                        text: "Error Message: " + response.error + ""               
-                    }).then(function (result) {
-                        window.location.reload()
+                        title: 'Government-benefits change not completed',
+                        text: response.responseJSON && response.responseJSON.error
+                            ? response.responseJSON.error
+                            : 'The request failed. No completion was confirmed.'
                     });
                 });
         } 
@@ -232,98 +259,297 @@ $(document).on("click","#dtrTbl #removeBenBtn",function() {
 
 
 function deleteDTRUpload(branch, client_location, branch_txt, client_location_txt) {
+    if (!payrollDetails.length) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Payroll scope unavailable',
+            text: 'Select a client and pay date again before deleting records.'
+        });
+        return;
+    }
+
     let client_name = payrollDetails[0][0];
     let pay_day = payrollDetails[0][2];
+    let preflightData = new FormData();
+    preflightData.append("request", 'preflight-delete-dtr-upload');
+    preflightData.append("client_name", client_name);
+    preflightData.append("pay_day", pay_day);
+    preflightData.append("branch", branch);
+    preflightData.append("client_location", client_location);
 
-    let message = '<strong>' + client_name + '<br>';
-    message += formatDate(pay_day) + '</strong><br>';
-    if(branch != null){
-        message += '<strong>' + branch_txt + '</strong><br>';
-    }
-    if(client_location != null){
-        message += '<strong>' + client_location_txt + '</strong><br>';
-    }
-    message += 'Click Yes to proceed.';
+    $.ajax({
+        url: 'controller/DTRController.php',
+        type: 'POST',
+        data: preflightData,
+        dataType: 'json',
+        contentType: false,
+        processData: false
+    }).done(function (preflight) {
+        if (preflight.success != 1 || !preflight.can_delete) {
+            Swal.fire({
+                icon: 'warning',
+                title: 'Deletion blocked',
+                text: preflight.error || 'No records can be deleted in this payroll scope.'
+            });
+            return;
+        }
 
-    Swal.fire({
-        title: 'Are you sure you want to remove all the records?', 
-        html: message,
-        icon: 'warning',  
-        showCancelButton: true,
-        confirmButtonText: `Yes`,
-        denyButtonText: `Cancel`,
-    }).then((result) => {
-        if (result.value) {
-            let formdata = new FormData();
-            formdata.append("request", 'delete-dtr-upload');
-            formdata.append("client_name", client_name);
-            formdata.append("pay_day", pay_day);
-            formdata.append("branch", branch);
-            formdata.append("client_location", client_location);
-            
+        let labels = {
+            dtr_upload: 'DTR rows',
+            payroll_gross_variables: 'Gross calculation rows',
+            payroll_other_additional: 'Additional-pay rows',
+            payroll_other_deduction: 'Deduction rows',
+            payroll_summary: 'Payroll summary rows'
+        };
+        let countRows = Object.keys(preflight.counts || {}).map(function (key) {
+            return '<tr><td class="text-start">' + (labels[key] || key) + '</td>'
+                + '<td class="text-end fw-bold">' + Number(preflight.counts[key] || 0).toLocaleString() + '</td></tr>';
+        }).join('');
+        let reviewedScope = preflight.scope || {};
+        let reviewedClient = String(reviewedScope.client || '');
+        let reviewedPayDay = String(reviewedScope.pay_day || '');
+        let reviewedBranch = reviewedScope.branch == null ? null : Number(reviewedScope.branch);
+        let reviewedLocation = reviewedScope.client_location == null
+            ? null
+            : Number(reviewedScope.client_location);
+        let branchLabel = reviewedBranch != null
+            ? '<div><strong>Branch:</strong> ' + dtrEscapeHtml(branch_txt) + ' (#' + reviewedBranch + ')</div>'
+            : '';
+        let locationLabel = reviewedLocation != null
+            ? '<div><strong>Location:</strong> ' + dtrEscapeHtml(client_location_txt) + '</div>'
+            : '';
+        let phrase = String(preflight.confirmation_phrase || '');
+        let reviewToken = String(preflight.review_token || '');
+        if (!reviewedClient || !reviewedPayDay || !phrase || !reviewToken) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Deletion review unavailable',
+                text: 'The server did not issue a complete deletion review. Refresh and try again.'
+            });
+            return;
+        }
+
+        Swal.fire({
+            title: 'Review records before deletion',
+            icon: 'warning',
+            width: 620,
+            html:
+                '<div class="text-start mb-3">'
+                + '<div><strong>Client:</strong> ' + dtrEscapeHtml(reviewedClient) + '</div>'
+                + '<div><strong>Pay date:</strong> ' + dtrEscapeHtml(formatDate(reviewedPayDay)) + '</div>'
+                + branchLabel + locationLabel
+                + '<div><strong>Employees:</strong> ' + Number(preflight.employee_count || 0).toLocaleString() + '</div>'
+                + '</div>'
+                + '<table class="table table-sm table-bordered mb-3"><tbody>' + countRows
+                + '<tr class="table-danger"><td class="text-start fw-bold">Total rows</td>'
+                + '<td class="text-end fw-bold">' + Number(preflight.total_rows || 0).toLocaleString() + '</td></tr>'
+                + '</tbody></table>'
+                + '<label class="form-label d-block text-start">Reason for deletion</label>'
+                + '<textarea id="dtr-delete-reason" class="form-control mb-3" maxlength="500" '
+                + 'placeholder="Explain why this payroll scope must be removed"></textarea>'
+                + '<label class="form-label d-block text-start">Evidence reference</label>'
+                + '<input id="dtr-delete-evidence" class="form-control mb-3" maxlength="500" '
+                + 'placeholder="Approval ID, ticket, source file, or controlled record">'
+                + '<label class="form-label d-block text-start">Type <code>'
+                + dtrEscapeHtml(phrase) + '</code> to confirm</label>'
+                + '<input id="dtr-delete-confirmation" class="form-control" autocomplete="off">',
+            showCancelButton: true,
+            confirmButtonText: 'Delete reviewed records',
+            confirmButtonColor: '#dc3545',
+            focusConfirm: false,
+            preConfirm: function () {
+                let reason = String($('#dtr-delete-reason').val() || '').trim();
+                let evidence = String($('#dtr-delete-evidence').val() || '').trim();
+                let confirmation = String($('#dtr-delete-confirmation').val() || '').trim();
+                if (reason.length < 10) {
+                    Swal.showValidationMessage('Enter a reason of at least 10 characters.');
+                    return false;
+                }
+                if (evidence.length < 3) {
+                    Swal.showValidationMessage('Enter a traceable evidence reference.');
+                    return false;
+                }
+                if (confirmation !== phrase) {
+                    Swal.showValidationMessage('The typed confirmation does not match the payroll scope.');
+                    return false;
+                }
+                return { reason: reason, evidence: evidence, confirmation: confirmation };
+            }
+        }).then(function (result) {
+            let values = result.value;
+            if (!values || (!result.isConfirmed && typeof result.isConfirmed !== 'undefined')) {
+                return;
+            }
+
+            let deleteData = new FormData();
+            deleteData.append("request", 'delete-dtr-upload');
+            deleteData.append("client_name", reviewedClient);
+            deleteData.append("pay_day", reviewedPayDay);
+            deleteData.append("branch", reviewedBranch == null ? 'null' : String(reviewedBranch));
+            deleteData.append("client_location", reviewedLocation == null ? 'null' : String(reviewedLocation));
+            deleteData.append("deletion_reason", values.reason);
+            deleteData.append("deletion_evidence", values.evidence);
+            deleteData.append("deletion_confirmation", values.confirmation);
+            deleteData.append("review_token", reviewToken);
+
             $.ajax({
                 url: 'controller/DTRController.php',
                 type: 'POST',
-                data: formdata,
+                data: deleteData,
                 dataType: 'json',
-                processing: true, 
                 contentType: false,
-                processData: false
-                })
-                .done(function (response) {
-
-                    if(response.success == 1){
-
-                        swal.fire({
-                            icon: 'success',   
-                            title: 'Successfully Deleted DTR! '        
-                        }).then(function (result) {
-                            getDTRList()
-                        });
-
-                    }else{
-
-                        swal.fire({
-                            icon: 'error',   
-                            title: 'Something went wrong!',                 
-                            text: "Error Message: " + response.error + ""               
-                        }).then(function (result) {
-                            window.location.reload()
-                        });
-                    }
-                
-                })
-                .fail(function (response) {
-                    swal.fire({
-                        icon: 'error',   
-                        title: 'Something went wrong!',                 
-                        text: "Error Message: " + response.error + ""               
-                    }).then(function (result) {
-                        window.location.reload()
+                processData: false,
+                beforeSend: function () {
+                    Swal.fire({
+                        title: 'Deleting reviewed records',
+                        text: 'The deletion and audit entry are being committed together.',
+                        allowOutsideClick: false,
+                        allowEscapeKey: false,
+                        didOpen: function () {
+                            if (Swal.showLoading) {
+                                Swal.showLoading();
+                            }
+                        }
                     });
+                }
+            }).done(function (response) {
+                let auditEvidenceLink = dtrAuditEvidenceLink(response.audit_event);
+                if(response.success == 1 && response.audit_recorded && auditEvidenceLink){
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Records deleted and audited',
+                        html: dtrAuditedSuccessHtml(
+                            Number(response.total_deleted || 0).toLocaleString() + ' rows were removed.',
+                            response.audit_event
+                        )
+                    }).then(function () {
+                        getDTRList();
+                    });
+                }else{
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Deletion rolled back',
+                        text: response.error || 'The records could not be deleted and audited.'
+                    });
+                }
+            }).fail(function (response) {
+                let message = response.responseJSON && response.responseJSON.error
+                    ? response.responseJSON.error
+                    : 'The deletion request failed. No completion was confirmed.';
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Deletion not completed',
+                    text: message
                 });
-        } 
-    })
+            });
+        });
+    }).fail(function (response) {
+        let message = response.responseJSON && response.responseJSON.error
+            ? response.responseJSON.error
+            : 'The deletion impact could not be verified.';
+        Swal.fire({
+            icon: 'error',
+            title: 'Preflight failed',
+            text: message
+        });
+    });
 };
 
-$(document).on("click","#dtrTbl #deleteRecord",function() {
+function dtrEscapeHtml(value) {
+    return $('<div>').text(String(value == null ? '' : value)).html();
+}
+
+function dtrAuditEvidenceUrl(eventId) {
+    let normalizedEventId = String(eventId == null ? '' : eventId).trim();
+    if (!/^DTRM-[A-F0-9]{32}$/.test(normalizedEventId)) {
+        return '';
+    }
+
+    return '../audit-log/?dtr_event=' + encodeURIComponent(normalizedEventId);
+}
+
+function dtrAuditEvidenceLink(eventId) {
+    let evidenceUrl = dtrAuditEvidenceUrl(eventId);
+    if (!evidenceUrl) {
+        return '';
+    }
+
+    return '<div class="mt-3">'
+        + '<a class="btn btn-sm btn-outline-primary" href="' + dtrEscapeHtml(evidenceUrl) + '">'
+        + '<i class="bx bx-link-external me-1" aria-hidden="true"></i>'
+        + 'View DTR Change Evidence'
+        + '</a>'
+        + '</div>';
+}
+
+function dtrAuditedSuccessHtml(summary, eventId) {
+    let evidenceLink = dtrAuditEvidenceLink(eventId);
+    if (!evidenceLink) {
+        return '';
+    }
+
+    return '<div>' + dtrEscapeHtml(summary) + '</div>' + evidenceLink;
+}
+
+$(document).on("click","#dtrTbl .js-delete-record",function() {
     employeeID = $(this).val();
+    let client_name = payrollDetails[0][0];
+    let cut_off = payrollDetails[0][1];
     let pay_day = payrollDetails[0][2];
+    let phrase = 'DELETE EMPLOYEE ' + employeeID + ' ' + client_name + ' ' + pay_day + ' ' + cut_off;
 
     Swal.fire({
-        title: 'Are you sure you want to remove the DTR for employee - '+employeeID+'?', 
-        html: 'Click Yes to proceed.',
-        icon: 'warning',  
+        title: 'Review employee payroll deletion',
+        html:
+            '<div class="text-start mb-3">'
+            + '<div><strong>Employee:</strong> ' + dtrEscapeHtml(employeeID) + '</div>'
+            + '<div><strong>Client:</strong> ' + dtrEscapeHtml(client_name) + '</div>'
+            + '<div><strong>Pay date:</strong> ' + dtrEscapeHtml(formatDate(pay_day)) + '</div>'
+            + '<div><strong>Cutoff:</strong> ' + dtrEscapeHtml(cut_off) + '</div>'
+            + '</div>'
+            + '<label class="form-label d-block text-start">Reason for deletion</label>'
+            + '<textarea id="dtr-employee-delete-reason" class="form-control mb-3" maxlength="500" '
+            + 'placeholder="Explain why this employee payroll scope must be removed"></textarea>'
+            + '<label class="form-label d-block text-start">Evidence reference</label>'
+            + '<input id="dtr-employee-delete-evidence" class="form-control mb-3" maxlength="500" '
+            + 'placeholder="Approval ID, ticket, source file, or controlled record">'
+            + '<label class="form-label d-block text-start">Type <code>'
+            + dtrEscapeHtml(phrase) + '</code> to confirm</label>'
+            + '<input id="dtr-employee-delete-confirmation" class="form-control" autocomplete="off">',
+        icon: 'warning',
         showCancelButton: true,
-        confirmButtonText: `Yes`,
-        denyButtonText: `Cancel`,
+        confirmButtonText: 'Delete employee records',
+        confirmButtonColor: '#dc3545',
+        focusConfirm: false,
+        preConfirm: function () {
+            let reason = String($('#dtr-employee-delete-reason').val() || '').trim();
+            let evidence = String($('#dtr-employee-delete-evidence').val() || '').trim();
+            let confirmation = String($('#dtr-employee-delete-confirmation').val() || '').trim();
+            if (reason.length < 10) {
+                Swal.showValidationMessage('Enter a reason of at least 10 characters.');
+                return false;
+            }
+            if (evidence.length < 3) {
+                Swal.showValidationMessage('Enter a traceable evidence reference.');
+                return false;
+            }
+            if (confirmation !== phrase) {
+                Swal.showValidationMessage('The typed confirmation does not match the employee payroll scope.');
+                return false;
+            }
+            return { reason: reason, evidence: evidence, confirmation: confirmation };
+        }
     }).then((result) => {
-        if (result.value) {
+        if (result.isConfirmed && result.value) {
             let formdata = new FormData();
             formdata.append("request", 'delete-employee-dtr');
             formdata.append("employee_ident", employeeID);
-            formdata.append("client_name", payrollDetails[0][0]);
+            formdata.append("client_name", client_name);
             formdata.append("pay_day", pay_day);
+            formdata.append("cut_off", cut_off);
+            formdata.append("deletion_reason", result.value.reason);
+            formdata.append("deletion_evidence", result.value.evidence);
+            formdata.append("deletion_confirmation", result.value.confirmation);
             
             $.ajax({
                 url: 'controller/DTRController.php',
@@ -335,35 +561,38 @@ $(document).on("click","#dtrTbl #deleteRecord",function() {
                 processData: false
                 })
                 .done(function (response) {
+                    let auditEvidenceLink = dtrAuditEvidenceLink(response.audit_event);
 
-                    if(response.success == 1){
+                    if(response.success == 1 && response.audit_recorded && auditEvidenceLink){
 
-                        swal.fire({
+                        Swal.fire({
                             icon: 'success',   
-                            title: 'Successfully Deleted DTR! '        
-                        }).then(function (result) {
+                            title: 'Employee DTR deleted and audited',
+                            html: dtrAuditedSuccessHtml(
+                                Number(response.total_deleted || 0).toLocaleString() + ' rows were removed.',
+                                response.audit_event
+                            )
+                        }).then(function () {
                             getDTRList()
                         });
 
                     }else{
 
-                        swal.fire({
+                        Swal.fire({
                             icon: 'error',   
-                            title: 'Something went wrong!',                 
-                            text: "Error Message: " + response.error + ""               
-                        }).then(function (result) {
-                            window.location.reload()
+                            title: 'Employee deletion rolled back',
+                            text: response.error || 'The employee payroll records could not be deleted and audited.'
                         });
                     }
                 
                 })
                 .fail(function (response) {
-                    swal.fire({
+                    Swal.fire({
                         icon: 'error',   
-                        title: 'Something went wrong!',                 
-                        text: "Error Message: " + response.error + ""               
-                    }).then(function (result) {
-                        window.location.reload()
+                        title: 'Employee deletion not completed',
+                        text: response.responseJSON && response.responseJSON.error
+                            ? response.responseJSON.error
+                            : 'The request failed. No completion was confirmed.'
                     });
                 });
         } 
@@ -371,7 +600,7 @@ $(document).on("click","#dtrTbl #deleteRecord",function() {
 });
 
 
-$(document).on("click","#dtrTbl #updateBtn",function() {
+$(document).on("click","#dtrTbl .js-dtr-update",function() {
     var row = $(this).closest('tr');
 
     employeeID = $(this).val();
@@ -441,6 +670,8 @@ $(document).on("click","#dtrTbl #updateBtn",function() {
     $('#rd-special-holiday-ot').val(rd_special_holiday_ot);
     $('#rd-special-holiday-night-diff').val(rd_special_holiday_night_diff);
     $('#rd-special-holiday-nd-ot').val(rd_special_holiday_nd_ot);
+    $('#dtr-change-reason').val('');
+    $('#dtr-change-evidence').val('');
     $('#editDTRModal').modal("show");
 
 });
@@ -478,6 +709,8 @@ function saveChanges(){
     let rest_day_nd_ot = $('#rest-day-nd-ot').val();
     let rd_regular_holiday_nd_ot = $('#rd-regular-holiday-nd-ot').val();
     let rd_special_holiday_nd_ot = $('#rd-special-holiday-nd-ot').val();
+    let change_reason = String($('#dtr-change-reason').val() || '').trim();
+    let change_evidence = String($('#dtr-change-evidence').val() || '').trim();
     
     if(daily_salary == '' || days_worked == ''){
         swal.fire({
@@ -488,14 +721,59 @@ function saveChanges(){
 
         return false;
     }
+    if (change_reason.length < 10 || change_reason.length > 500) {
+        swal.fire({
+            icon: 'info',
+            title: 'Business reason required',
+            text: 'Enter a business reason between 10 and 500 characters.'
+        });
+        return false;
+    }
+    if (change_evidence.length < 3 || change_evidence.length > 500) {
+        swal.fire({
+            icon: 'info',
+            title: 'Evidence reference required',
+            text: 'Enter an approval, ticket, source file, or controlled record reference.'
+        });
+        return false;
+    }
 
-    if(days_worked > 16){
+    const numericValues = [
+        daily_salary, days_worked, absent, lates, undertime, vacation_leave, sick_leave,
+        overtime, night_diff, night_diff_ot, regular_holiday, regular_holiday_ot,
+        regular_holiday_night_diff, special_holiday, special_holiday_ot,
+        special_holiday_night_diff, rest_day, rest_day_ot, rest_day_night_diff,
+        rd_regular_holiday, rd_regular_holiday_ot, rd_regular_holiday_night_diff,
+        rd_special_holiday, rd_special_holiday_ot, rd_special_holiday_night_diff,
+        regular_holiday_nd_ot, special_holiday_nd_ot, rest_day_nd_ot,
+        rd_regular_holiday_nd_ot, rd_special_holiday_nd_ot
+    ];
+    const invalidNumeric = numericValues.some(function (value) {
+        return value !== '' && (!Number.isFinite(Number(value)) || Number(value) < 0);
+    });
+    if (invalidNumeric) {
         swal.fire({
             icon: 'info',   
-            title: 'Days Worked!',       
-            text: 'Worked Days is more than 16'
+            title: 'Invalid payroll value',
+            text: 'DTR values must be valid non-negative numbers.'
         });
+        return false;
+    }
 
+    let periodDays = null;
+    if (payrollDetails.length === 1) {
+        let periodStart = new Date(payrollDetails[0][3] + 'T00:00:00');
+        let periodEnd = new Date(payrollDetails[0][4] + 'T00:00:00');
+        if (!Number.isNaN(periodStart.getTime()) && !Number.isNaN(periodEnd.getTime())) {
+            periodDays = Math.floor((periodEnd - periodStart) / 86400000) + 1;
+        }
+    }
+    if (periodDays !== null && Number(days_worked) > periodDays) {
+        swal.fire({
+            icon: 'info',
+            title: 'Days worked exceeds the period',
+            text: 'Days worked cannot be more than the selected ' + periodDays + '-day payroll period.'
+        });
         return false;
     }
 
@@ -532,6 +810,8 @@ function saveChanges(){
     formdata.append("rest_day_nd_ot", rest_day_nd_ot);
     formdata.append("rd_regular_holiday_nd_ot", rd_regular_holiday_nd_ot);
     formdata.append("rd_special_holiday_nd_ot", rd_special_holiday_nd_ot);
+    formdata.append("change_reason", change_reason);
+    formdata.append("change_evidence", change_evidence);
     for(let i=0; i < payrollDetails.length; i++) {
         formdata.append("client_name", payrollDetails[i][0]);
         formdata.append("cut_off", payrollDetails[i][1]);
@@ -553,11 +833,16 @@ function saveChanges(){
             $('#saveChanges').attr('disabled',true);
         },
         success: function (response) { 
-            $("#editDTRModal").modal('hide');
-            if(response.success == 1){
+            let auditEvidenceLink = dtrAuditEvidenceLink(response.audit_event);
+            if(response.success == 1 && response.audit_recorded && auditEvidenceLink){
+                $("#editDTRModal").modal('hide');
                 swal.fire({
                     icon: 'success',   
-                    title: 'Successfully Saved Changes! '        
+                    title: 'DTR change saved and audited',
+                    html: dtrAuditedSuccessHtml(
+                        'The DTR change and its audit evidence were committed together.',
+                        response.audit_event
+                    )
                 }).then(function (result) {
                     getDTRList();
                 });
@@ -565,25 +850,24 @@ function saveChanges(){
             }else{
                 swal.fire({
                     icon: 'error',   
-                    title: 'Something went wrong!',                 
-                    text: "Error Message: " + response.error + ""               
-                }).then(function (result) {
-                    window.location.reload()
+                    title: 'DTR changes were not saved',
+                    text: response.error || 'The DTR update failed validation.'
                 });
             }
-
-            $('#saveChanges').html('Save Changes');
-            $('#saveChanges').attr('disabled',false);
         },
         error: function(response) { // if error occured
-            $("#editDTRModal").modal('hide');
+            let message = response.responseJSON && response.responseJSON.error
+                ? response.responseJSON.error
+                : 'The DTR update request could not be completed.';
             swal.fire({
                 icon: 'error',   
-                title: 'Something went wrong!',                 
-                text: "Error Message: " + response.error + ""               
-            }).then(function (result) {
-                window.location.reload()
+                title: 'DTR changes were not saved',
+                text: message
             });
+        },
+        complete: function () {
+            $('#saveChanges').html('Save Changes');
+            $('#saveChanges').attr('disabled',false);
         }
     });
 }
@@ -725,16 +1009,19 @@ function getClientLocation(client_selected){
 
 
 function importData() {
-    $('#importModal').modal('show');
+    Swal.fire({
+        icon: 'info',
+        title: 'Use Smart DTR Upload',
+        text: 'The retired browser-batched workbook uploader is closed. Continue in DTR Format Engine for governed parsing, employee alignment, review, and reconciliation.',
+        showCancelButton: true,
+        confirmButtonText: 'Open DTR Format Engine',
+        cancelButtonText: 'Stay here'
+    }).then(function (result) {
+        if (result.isConfirmed) {
+            window.location.href = '../dtr-format-engine/';
+        }
+    });
 }
-
-$("#importModal").on('hidden.bs.modal', function (e) {	
-    $('#readingFileStatus').html("");
-    $('#tableOutput').html("");
-    $('#dataType').prop('disabled', false);
-    $('#fileUploader').prop('disabled', false);
-    document.getElementById('fileUploader').value= null;
-});
 
 function getDTRList() {    
     let client = $("#client").val();
@@ -1110,4 +1397,3 @@ function formatDate(dateString) {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
-

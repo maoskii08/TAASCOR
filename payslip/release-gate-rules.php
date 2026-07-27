@@ -9,25 +9,28 @@ declare(strict_types=1);
  */
 function payroll_release_gate_policy(array $context): array
 {
-    if (empty($context['smart_run_schema_exists']) || empty($context['smart_flow_enrolled'])) {
-        return [
-            'success' => 1,
-            'gate_status' => 'ready',
-            'mode' => 'legacy',
-            'blocking_reasons' => [],
-        ];
+    if (empty($context['smart_run_schema_exists'])) {
+        return payroll_legacy_preview_gate_blocked(['smart_run_schema_required'], $context);
+    }
+    if (empty($context['smart_flow_enrolled'])) {
+        return payroll_legacy_preview_gate_blocked(['smart_payroll_enrollment_required'], $context);
+    }
+    if ((int)($context['live_payroll_row_count'] ?? 0) <= 0) {
+        return payroll_release_gate_blocked(['payroll_scope_empty'], $context);
     }
 
     $authoritativeRunId = (int)($context['authoritative_run_id'] ?? 0);
     if ($authoritativeRunId <= 0) {
-        return payroll_release_gate_blocked(['authoritative_run_selection_required']);
+        return payroll_release_gate_blocked(['authoritative_run_selection_required'], $context);
     }
     $runs = is_array($context['runs'] ?? null) ? $context['runs'] : [];
     if (count($runs) !== 1 || (int)($runs[0]['id'] ?? 0) !== $authoritativeRunId) {
-        return payroll_release_gate_blocked(['authoritative_smart_run_missing']);
+        return payroll_release_gate_blocked(['authoritative_smart_run_missing'], $context);
     }
 
     $actor = trim((string)($context['actor'] ?? ''));
+    $releaseAttempt = !empty($context['release_attempt']);
+    $releaseActorVerified = false;
     $blocking = [];
     foreach ($runs as $run) {
         $uid = trim((string)($run['run_uid'] ?? $run['id'] ?? 'unknown'));
@@ -100,14 +103,19 @@ function payroll_release_gate_policy(array $context): array
         } elseif (strcasecmp($maker, $checker) === 0) {
             $blocking[] = $prefix . 'maker_checker_same_user';
         }
-        if (!empty($context['release_attempt'])
-            && ($actor === '' || $checker === '' || strcasecmp($actor, $checker) !== 0)) {
-            $blocking[] = $prefix . 'release_actor_not_checker';
+        if ($releaseAttempt) {
+            if ($actor === '') {
+                $blocking[] = $prefix . 'release_actor_missing';
+            } elseif ($checker !== '' && strcasecmp($actor, $checker) === 0) {
+                $blocking[] = $prefix . 'release_actor_is_checker';
+            } else {
+                $releaseActorVerified = true;
+            }
         }
     }
 
     if (count($blocking) > 0) {
-        return payroll_release_gate_blocked(array_values(array_unique($blocking)));
+        return payroll_release_gate_blocked(array_values(array_unique($blocking)), $context);
     }
 
     return [
@@ -116,6 +124,9 @@ function payroll_release_gate_policy(array $context): array
         'mode' => 'smart_run',
         'smart_flow_enrolled' => true,
         'authoritative_run_id' => $authoritativeRunId,
+        'release_attempt' => $releaseAttempt,
+        'release_actor' => $actor,
+        'release_actor_verified' => $releaseActorVerified,
         'run_ids' => array_values(array_map(
             static fn(array $run): int => (int)($run['id'] ?? 0),
             $runs
@@ -129,9 +140,10 @@ function payroll_release_gate_sha256($value): bool
     return preg_match('/^[a-f0-9]{64}$/i', trim((string)$value)) === 1;
 }
 
-function payroll_release_gate_blocked(array $reasons): array
+function payroll_release_gate_blocked(array $reasons, array $context = []): array
 {
-    return [
+    $runs = is_array($context['runs'] ?? null) ? $context['runs'] : [];
+    $response = [
         'success' => 0,
         'gate_status' => 'blocked',
         'mode' => 'smart_run',
@@ -139,4 +151,36 @@ function payroll_release_gate_blocked(array $reasons): array
         'error' => 'Payroll cannot be posted until identity, calculation, reconciliation, payslip, and maker-checker controls pass.',
         'blocking_reasons' => array_values(array_unique($reasons)),
     ];
+
+    if (array_key_exists('smart_flow_enrolled', $context)) {
+        $response['smart_flow_enrolled'] = !empty($context['smart_flow_enrolled']);
+    }
+    if (array_key_exists('authoritative_run_id', $context)) {
+        $response['authoritative_run_id'] = (int)$context['authoritative_run_id'];
+    }
+    if (count($runs) > 0) {
+        $response['run_ids'] = array_values(array_map(
+            static fn(array $run): int => (int)($run['id'] ?? 0),
+            $runs
+        ));
+    }
+    if (array_key_exists('release_attempt', $context)) {
+        $response['release_attempt'] = !empty($context['release_attempt']);
+    }
+    if (array_key_exists('actor', $context)) {
+        $response['release_actor'] = trim((string)$context['actor']);
+        $response['release_actor_verified'] = false;
+    }
+
+    return $response;
+}
+
+function payroll_legacy_preview_gate_blocked(array $reasons, array $context = []): array
+{
+    $response = payroll_release_gate_blocked($reasons, $context);
+    $response['mode'] = 'legacy_preview';
+    $response['preview_allowed'] = true;
+    $response['preview_policy'] = 'unverified_legacy_non_distributable';
+    $response['error'] = 'Legacy payslip preview is available, but payroll posting requires the governed smart-run controls.';
+    return $response;
 }

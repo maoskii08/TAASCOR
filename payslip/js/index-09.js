@@ -16,6 +16,11 @@ document.getElementById('postBtn').addEventListener("click", postPayroll);
 document.getElementById('filterBtn').addEventListener("click", getPayrollSummary);
 document.getElementById('payrollRun').addEventListener("change", function () {
     payrollRunId = Number($(this).val() || 0) || null;
+    payrollReleaseGate = null;
+    $('#postBtn')
+        .prop('disabled', true)
+        .attr('title', 'The selected payroll run must be verified again.');
+    renderPayrollReleaseGateStatus(null, false);
     if (payrollRunId) {
         getPayrollSummary();
     }
@@ -47,11 +52,23 @@ function clearFilter() {
     payrollLocked = false;
     $('#payrollRun').html('<option value="">Select the approved sealed run</option>');
     $('#smartRunSelectorRow').hide();
-    $('#postBtn').prop('disabled', false).removeAttr('title');
+    $('#payrollReleaseGateStatus').hide().empty();
+    $('#postBtn')
+        .prop('disabled', true)
+        .attr('title', 'Generate payroll and pass the release controls before posting.');
 }
 
 function downloadPayslip() {
     if(payrollDetails.length > 0){
+        if (payrollReleaseGate && payrollReleaseGate.mode === 'smart_run'
+            && !payrollPreviewRunIsSelected(payrollReleaseGate)) {
+            swal.fire({
+                icon: 'warning',
+                title: 'Payslip preview is blocked',
+                text: 'Select and verify the exact governed payroll run before opening its payslips.'
+            });
+            return false;
+        }
         let client_name = payrollDetails[0][0];
         let cut_off = payrollDetails[0][1];
         let pay_day = payrollDetails[0][2];
@@ -74,7 +91,9 @@ function downloadPayslip() {
         if (payrollLocked && payrollRunId && payrollReleaseGate && payrollReleaseGate.mode === 'smart_run') {
             url = "payslip-sealed.php?run_id=" + encodeURIComponent(String(payrollRunId));
         } else {
-            if (payrollReleaseGate && payrollReleaseGate.mode === 'smart_run') {
+            if (payrollReleaseGate
+                && (payrollReleaseGate.mode === 'smart_run'
+                    || payrollReleaseGate.mode === 'legacy_preview')) {
                 params.set('preview', '1');
             }
             url = "payslip2.php?" + params.toString();
@@ -109,14 +128,11 @@ function postPayroll(){
         return false;
     }
 
-    if(payrollReleaseGate && payrollReleaseGate.success != 1){
-        let blockers = payrollReleaseGate.blocking_reasons || [];
+    if(!payrollReleaseGateIsReady(payrollReleaseGate)){
         swal.fire({
             icon: 'warning',
             title: 'Payroll release is blocked',
-            text: blockers.length > 0
-                ? blockers.join(', ')
-                : 'Complete the identity, calculation, reconciliation, payslip, and maker-checker controls first.'
+            text: payrollReleaseGateMessage(payrollReleaseGate)
         });
         return false;
     }
@@ -186,6 +202,16 @@ function postPayroll(){
 $(document).on("click","#dtrTbl #empPayslip",function() {
     let employee_id = $(this).val();
 
+    if (payrollReleaseGate && payrollReleaseGate.mode === 'smart_run'
+        && !payrollPreviewRunIsSelected(payrollReleaseGate)) {
+        swal.fire({
+            icon: 'warning',
+            title: 'Payslip preview is blocked',
+            text: 'Select and verify the exact governed payroll run before opening this payslip.'
+        });
+        return false;
+    }
+
     let client_name = payrollDetails[0][0];
     let cut_off = payrollDetails[0][1];
     let pay_day = payrollDetails[0][2];
@@ -196,7 +222,21 @@ $(document).on("click","#dtrTbl #empPayslip",function() {
         ei: employee_id,
         layout: payslipLayout
     });
-    let url = "payslip2.php?" + params.toString();
+    if (payrollRunId) {
+        params.set('run_id', String(payrollRunId));
+    }
+    let url;
+    if (payrollLocked && payrollRunId && payrollReleaseGate && payrollReleaseGate.mode === 'smart_run') {
+        url = "payslip-sealed.php?run_id=" + encodeURIComponent(String(payrollRunId))
+            + "&employee_id=" + encodeURIComponent(String(employee_id));
+    } else {
+        if (payrollReleaseGate
+            && (payrollReleaseGate.mode === 'smart_run'
+                || payrollReleaseGate.mode === 'legacy_preview')) {
+            params.set('preview', '1');
+        }
+        url = "payslip2.php?" + params.toString();
+    }
     window.open(url, '_blank')
 });
 
@@ -522,13 +562,19 @@ function getPayrollSummary() {
                 payrollLocked = Boolean(response.locked);
                 payrollReleaseGate = response.release_gate || null;
                 renderPayrollRunCandidates(payrollReleaseGate);
-                let releaseReady = !response.locked && (!payrollReleaseGate || payrollReleaseGate.success == 1);
+                let releaseReady = !response.locked && payrollReleaseGateIsReady(payrollReleaseGate);
                 $('#postBtn').prop('disabled', !releaseReady);
-                if(!releaseReady && payrollReleaseGate && payrollReleaseGate.blocking_reasons){
-                    $('#postBtn').attr('title', payrollReleaseGate.blocking_reasons.join(', '));
+                if(!releaseReady){
+                    $('#postBtn').attr(
+                        'title',
+                        response.locked
+                            ? 'Payroll is posted and locked.'
+                            : payrollReleaseGateMessage(payrollReleaseGate)
+                    );
                 }else{
-                    $('#postBtn').removeAttr('title');
+                    $('#postBtn').attr('title', 'All release controls passed for the selected authoritative run.');
                 }
+                renderPayrollReleaseGateStatus(payrollReleaseGate, Boolean(response.locked));
                 payrollDetails= [];
                 payrollDetails.push([client,cut_off,pay_day,start_date,end_date,pay_type,bank_name,client_location]);
                 var table = `<table id="dtrTbl" class="dt-complex-header table table-bordered table-sm nowrap"
@@ -582,8 +628,6 @@ function getPayrollSummary() {
                 if(pay_day != null && pay_day != ''){
                     fileName += "_" + pay_day;
                 }
-                console.log(response.data2)
-                console.log(response.columns2)
                 $('#clientTbl').DataTable().destroy();
                 $('#clientTbl').DataTable({
                     data: response.data2,
@@ -647,7 +691,7 @@ function getPayrollSummary() {
 }
 
 function renderPayrollRunCandidates(gate) {
-    if (!gate || gate.mode === 'legacy') {
+    if (!gate || gate.mode !== 'smart_run') {
         payrollRunId = null;
         $('#smartRunSelectorRow').hide();
         return;
@@ -668,6 +712,86 @@ function renderPayrollRunCandidates(gate) {
         $('#payrollRun').html(options);
     }
     $('#smartRunSelectorRow').show();
+}
+
+function payrollReleaseGateIsReady(gate) {
+    return Boolean(
+        gate
+        && gate.success == 1
+        && gate.gate_status === 'ready'
+        && gate.mode === 'smart_run'
+        && gate.release_attempt === true
+        && gate.release_actor_verified === true
+        && String(gate.release_actor || '').trim() !== ''
+        && Number(gate.authoritative_run_id || 0) > 0
+        && Number(gate.authoritative_run_id) === Number(payrollRunId || 0)
+    );
+}
+
+function payrollPreviewRunIsSelected(gate) {
+    return Boolean(
+        gate
+        && gate.mode === 'smart_run'
+        && Number(gate.authoritative_run_id || 0) > 0
+        && Number(gate.authoritative_run_id) === Number(payrollRunId || 0)
+    );
+}
+
+function payrollReleaseGateMessage(gate) {
+    if (!gate) {
+        return 'Release controls could not be verified. Refresh the payroll scope and try again.';
+    }
+    let labels = {
+        smart_run_schema_required: 'Smart payroll release controls are not installed.',
+        smart_run_schema_incomplete: 'Smart payroll release controls are incomplete.',
+        smart_payroll_enrollment_required: 'This client is not enrolled in the governed payroll workflow.',
+        payroll_scope_empty: 'The selected client and pay date contain no payroll rows.',
+        authoritative_run_selection_required: 'Select an approved, sealed payroll run.',
+        authoritative_smart_run_missing: 'The selected authoritative payroll run is unavailable.',
+        release_actor_missing: 'The authenticated release actor could not be verified.',
+        release_actor_is_checker: 'The run checker cannot also release payroll. Use an independent authorized release actor.',
+        smart_run_gate_check_failed: 'The release controls could not be verified.'
+    };
+    let blockers = Array.isArray(gate.blocking_reasons) ? gate.blocking_reasons : [];
+    if (!blockers.length) {
+        return gate.error || 'Identity, calculation, reconciliation, payslip, and maker-checker controls must pass.';
+    }
+    return blockers.map(function (reason) {
+        if (labels[reason]) {
+            return labels[reason];
+        }
+        let code = String(reason).replace(/^run:[^:]+:/, '');
+        if (labels[code]) {
+            return labels[code];
+        }
+        return code.replace(/_/g, ' ').replace(/\b\w/g, function (letter) {
+            return letter.toUpperCase();
+        });
+    }).join(' ');
+}
+
+function renderPayrollReleaseGateStatus(gate, locked) {
+    let ready = payrollReleaseGateIsReady(gate);
+    let status = $('#payrollReleaseGateStatus');
+    status
+        .removeClass('alert-warning alert-success alert-secondary')
+        .addClass(locked ? 'alert-secondary' : (ready ? 'alert-success' : 'alert-warning'));
+
+    if (locked) {
+        status.text('Posted and locked. Payroll data can no longer be changed for this scope.').show();
+        return;
+    }
+    if (gate && gate.mode === 'legacy_preview' && gate.preview_allowed === true) {
+        status
+            .text('Posting blocked. Payslips may be generated only as UNVERIFIED LEGACY PREVIEW - NON-DISTRIBUTABLE.')
+            .show();
+        return;
+    }
+    if (ready) {
+        status.text('Ready to post. The authoritative run and all release controls passed.').show();
+        return;
+    }
+    status.text('Posting blocked: ' + payrollReleaseGateMessage(gate)).show();
 }
 
 

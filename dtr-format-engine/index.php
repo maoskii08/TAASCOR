@@ -26,7 +26,9 @@ $canConfigureTemplates = auth_level() === 1;
   <script src="../assets/js/config.js"></script>
 </head>
 
-<body data-can-configure-templates="<?php echo $canConfigureTemplates ? '1' : '0'; ?>">
+<body
+  data-can-configure-templates="<?php echo $canConfigureTemplates ? '1' : '0'; ?>"
+  data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2], true) ? '1' : '0'; ?>">
   <div class="layout-wrapper layout-content-navbar">
     <div class="layout-container">
       <?php require('../includes/nav-bar.php') ?>
@@ -201,7 +203,15 @@ $canConfigureTemplates = auth_level() === 1;
                   <h5 class="mb-1">Governed DTR Format Registry</h5>
                   <small class="text-muted">Create immutable adapter versions from client templates. Maker-checker approval is required before a format becomes available for real uploads.</small>
                 </div>
-                <span class="badge bg-label-primary">Admin controlled</span>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-primary" id="openDtrTemplateDrawerBtn"
+                    data-bs-toggle="offcanvas" data-bs-target="#dtrTemplateDrawer"
+                    aria-controls="dtrTemplateDrawer">
+                    <i class="bx bx-table me-1"></i>
+                    <?php echo $canConfigureTemplates ? 'Manage' : 'View'; ?> DTR templates
+                  </button>
+                  <span class="badge bg-label-primary">Admin controlled</span>
+                </div>
               </div>
               <div class="card-body">
                 <form id="adapterProfileForm" class="mb-4">
@@ -232,6 +242,7 @@ $canConfigureTemplates = auth_level() === 1;
                       <label class="form-label" for="adapterParserKey">Parser</label>
                       <select class="form-select" id="adapterParserKey" name="parser_key">
                         <option value="template_tabular_v1">Standard CSV/XLSX table</option>
+                        <option value="period_summary_workbook_v1">Multi-sheet period summary</option>
                         <option value="fuji_payroll_summary_v1">Fuji payroll summary</option>
                       </select>
                     </div>
@@ -292,8 +303,8 @@ $canConfigureTemplates = auth_level() === 1;
             <div class="card mb-4" id="smart-employee-resolution">
               <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
                 <div>
-                  <h5 class="mb-1">Smart Employee Alignment</h5>
-                  <small class="text-muted">Batch-wide, one-to-one matching using approved aliases, identifiers, names, hire dates, and payroll-period employment status.</small>
+                  <h5 class="mb-1">Smart Employee Alignment <span class="badge bg-label-primary ms-1">Step 1</span></h5>
+                  <small class="text-muted">Automated candidate workbench: compare DTR identities with HRIS, select supported matches, then record one governed owner approval.</small>
                 </div>
                 <div class="d-flex gap-2">
                   <select class="form-select form-select-sm" id="smartBatchFilter" style="min-width:260px">
@@ -306,7 +317,7 @@ $canConfigureTemplates = auth_level() === 1;
               </div>
               <div class="card-body">
                 <div class="alert alert-info py-2" id="smartResolutionStatus">
-                  The resolver runs in shadow mode. Nothing is mapped until an HR, Payroll, or Admin owner explicitly approves the safe cohort.
+                  The resolver runs in shadow mode. Nothing is mapped until an authorized identity owner explicitly approves selected proposals.
                 </div>
                 <div class="row g-3 mb-3">
                   <div class="col-sm-6 col-xl"><span class="text-muted d-block">Unique source employees</span><h6 id="smartSourceCount" class="mb-0">-</h6></div>
@@ -334,7 +345,7 @@ $canConfigureTemplates = auth_level() === 1;
                   </div>
                   <div class="col-lg-2 d-grid">
                     <button type="button" class="btn btn-sm btn-success" id="approveSmartCohortBtn" disabled>
-                      <i class="bx bx-check-shield me-1"></i>Approve safe cohort
+                      <i class="bx bx-check-shield me-1"></i>Approve selected
                     </button>
                   </div>
                 </div>
@@ -342,6 +353,10 @@ $canConfigureTemplates = auth_level() === 1;
                   <table class="table table-sm table-bordered align-middle" id="smartResolutionTable">
                     <thead>
                       <tr>
+                        <th class="text-center" style="width:48px">
+                          <input type="checkbox" class="form-check-input" id="smartResolutionSelectAll"
+                            aria-label="Select all eligible mappings in the current view" disabled>
+                        </th>
                         <th>DTR employee</th>
                         <th>Best HRIS candidate</th>
                         <th>Evidence</th>
@@ -349,11 +364,12 @@ $canConfigureTemplates = auth_level() === 1;
                       </tr>
                     </thead>
                     <tbody>
-                      <tr><td colspan="4" class="text-center text-muted">Select and analyze a staged batch.</td></tr>
+                      <tr><td colspan="5" class="text-center text-muted">Select and analyze a staged batch.</td></tr>
                     </tbody>
                   </table>
                 </div>
-                <small class="text-muted" id="smartResolutionTableSummary"></small>
+                <small class="text-muted d-block" id="smartResolutionTableSummary"></small>
+                <small class="text-muted">Only rows with a proposed HRIS employee can be selected. Blocked rows remain unavailable and must be corrected under Employee Identity Exceptions.</small>
                 <div class="border rounded p-3 mt-3" id="payrollImportRunPanel">
                   <div class="d-flex flex-wrap gap-3 align-items-center justify-content-between">
                     <div>
@@ -380,8 +396,8 @@ $canConfigureTemplates = auth_level() === 1;
             <div class="card mb-4" id="employee-identity-review">
               <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
                 <div>
-                  <h5 class="mb-1">Employee Identity Resolution</h5>
-                  <small class="text-muted">Unresolved employees remain staged and block payroll-basis finalization.</small>
+                  <h5 class="mb-1">Employee Identity Exceptions <span class="badge bg-label-warning ms-1">Step 2</span></h5>
+                  <small class="text-muted">Manual exception queue for records that still need master-data correction, exclusion evidence, or an individual mapping decision.</small>
                 </div>
                 <div class="d-flex gap-2">
                   <select class="form-select form-select-sm" id="identityBatchFilter" style="min-width:220px">
@@ -495,128 +511,7 @@ $canConfigureTemplates = auth_level() === 1;
             </div>
 
             <div class="row g-4">
-              <div class="col-xl-5">
-                <div class="card">
-                  <div class="card-header d-flex align-items-center justify-content-between">
-                    <h5 class="mb-0">Template Details</h5>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="newTemplateBtn">
-                      <i class="bx bx-plus"></i>
-                    </button>
-                  </div>
-                  <div class="card-body">
-                    <form id="templateForm" autocomplete="off">
-                      <input type="hidden" id="templateId" name="id" value="0" />
-                      <div class="mb-3">
-                        <label for="templateName" class="form-label">Template Name</label>
-                        <input type="text" class="form-control" id="templateName" name="template_name" maxlength="150" required />
-                      </div>
-                      <div class="row g-3">
-                        <div class="col-md-6">
-                          <label for="clientId" class="form-label">Client</label>
-                          <select class="form-select" id="clientId" name="client_id">
-                            <option value="">Any client</option>
-                          </select>
-                        </div>
-                        <div class="col-md-6">
-                          <label for="locationId" class="form-label">Site</label>
-                          <select class="form-select" id="locationId" name="location_id">
-                            <option value="">Any site</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div class="row g-3 mt-0">
-                        <div class="col-md-6">
-                          <label for="sourceType" class="form-label">Source Type</label>
-                          <select class="form-select" id="sourceType" name="source_type" required></select>
-                        </div>
-                        <div class="col-md-6">
-                          <label for="fileType" class="form-label">File Type</label>
-                          <select class="form-select" id="fileType" name="file_type" required></select>
-                        </div>
-                      </div>
-                      <div class="row g-3 mt-0">
-                        <div class="col-md-6">
-                          <label for="dateFormat" class="form-label">Date Format</label>
-                          <input type="text" class="form-control" id="dateFormat" name="date_format" maxlength="50" placeholder="Y-m-d" required />
-                        </div>
-                        <div class="col-md-6">
-                          <label for="timeFormat" class="form-label">Time Format</label>
-                          <input type="text" class="form-control" id="timeFormat" name="time_format" maxlength="50" placeholder="H:i" required />
-                        </div>
-                      </div>
-                      <div class="mt-3">
-                        <label for="employeeIdentifierField" class="form-label">Employee Identifier Field</label>
-                        <input type="text" class="form-control" id="employeeIdentifierField" name="employee_identifier_field" maxlength="120" required />
-                      </div>
-                      <div class="mt-3">
-                        <label for="expectedHeaders" class="form-label">Expected Headers</label>
-                        <textarea class="form-control" id="expectedHeaders" name="expected_headers" rows="4" required></textarea>
-                      </div>
-
-                      <div class="d-flex align-items-center justify-content-between mt-4">
-                        <h6 class="mb-0">Column Mapping</h6>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="addMappingBtn">
-                          <i class="bx bx-plus"></i>
-                        </button>
-                      </div>
-                      <div class="table-responsive mt-2">
-                        <table class="table table-sm align-middle" id="mappingTable">
-                          <thead>
-                            <tr>
-                              <th>Source Header</th>
-                               <th>Canonical Field</th>
-                               <th>Type</th>
-                               <th>Transform</th>
-                               <th>Required</th>
-                              <th></th>
-                            </tr>
-                          </thead>
-                          <tbody></tbody>
-                        </table>
-                      </div>
-                      <div class="form-check form-switch mt-2">
-                        <input class="form-check-input" type="checkbox" id="isActive" name="is_active" checked>
-                        <label class="form-check-label" for="isActive">Active</label>
-                      </div>
-                      <div class="d-flex gap-2 mt-4">
-                        <button type="submit" class="btn btn-primary" id="saveTemplateBtn">
-                          <i class="bx bx-save"></i>
-                          Save
-                        </button>
-                        <button type="button" class="btn btn-outline-secondary" id="resetTemplateBtn">Reset</button>
-                      </div>
-                    </form>
-                  </div>
-                </div>
-              </div>
-
-              <div class="col-xl-7">
-                <div class="card mb-4">
-                  <div class="card-header">
-                    <h5 class="mb-0">DTR Templates</h5>
-                  </div>
-                  <div class="card-body">
-                    <div class="table-responsive">
-                      <table class="table table-sm table-bordered align-middle" id="templatesTable">
-                        <thead>
-                          <tr>
-                            <th>Name</th>
-                            <th>Client/Site</th>
-                            <th>Source</th>
-                            <th>Fields</th>
-                            <th>Status</th>
-                            <th>Updated</th>
-                            <th></th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-
+              <div class="col-12">
                 <div class="card mb-4">
                   <div class="card-header d-flex align-items-center justify-content-between">
                     <h5 class="mb-0">Synthetic Validation Preview</h5>
@@ -1157,6 +1052,170 @@ $canConfigureTemplates = auth_level() === 1;
     </div>
   </div>
 
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="dtrTemplateDrawer"
+    aria-labelledby="dtrTemplateDrawerTitle" style="width:min(1100px, 96vw)">
+    <div class="offcanvas-header border-bottom align-items-start">
+      <div class="me-3">
+        <h5 class="offcanvas-title mb-1" id="dtrTemplateDrawerTitle">DTR template library</h5>
+        <p class="text-muted mb-0 small">
+          Review client and site formats without interrupting the active payroll workflow.
+        </p>
+      </div>
+      <div class="d-flex align-items-center gap-2 ms-auto">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="newTemplateBtn">
+          <i class="bx bx-plus me-1"></i>New template
+        </button>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close DTR template library"></button>
+      </div>
+    </div>
+    <div class="offcanvas-body">
+      <div class="alert alert-info py-2">
+        Templates define source structure and column mapping. Approved adapter versions remain governed separately in the DTR Format Registry.
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div>
+            <h5 class="mb-1">DTR Templates</h5>
+            <small class="text-muted">Choose Edit to review or update an existing template.</small>
+          </div>
+          <span class="badge bg-label-secondary">Configuration library</span>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle" id="templatesTable">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Client/Site</th>
+                  <th>Source</th>
+                  <th>Fields</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="7" class="text-center text-muted">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="templateEditorCard">
+        <div class="card-header">
+          <h5 class="mb-1">Template Details</h5>
+          <small class="text-muted">Create a new mapping or edit the selected template.</small>
+        </div>
+        <div class="card-body">
+          <form id="templateForm" autocomplete="off">
+            <input type="hidden" id="templateId" name="id" value="0" />
+            <div class="mb-3">
+              <label for="templateName" class="form-label">Template Name</label>
+              <input type="text" class="form-control" id="templateName" name="template_name" maxlength="150" required />
+            </div>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label for="clientId" class="form-label">Client</label>
+                <select class="form-select" id="clientId" name="client_id">
+                  <option value="">Any client</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label for="locationId" class="form-label">Site</label>
+                <select class="form-select" id="locationId" name="location_id">
+                  <option value="">Any site</option>
+                </select>
+              </div>
+            </div>
+            <div class="row g-3 mt-0">
+              <div class="col-md-6">
+                <label for="sourceType" class="form-label">Source Type</label>
+                <select class="form-select" id="sourceType" name="source_type" required></select>
+              </div>
+              <div class="col-md-6">
+                <label for="fileType" class="form-label">File Type</label>
+                <select class="form-select" id="fileType" name="file_type" required></select>
+              </div>
+            </div>
+            <div class="row g-3 mt-0">
+              <div class="col-md-6">
+                <label for="dateFormat" class="form-label">Date Format</label>
+                <input type="text" class="form-control" id="dateFormat" name="date_format" maxlength="50" placeholder="Y-m-d" required />
+              </div>
+              <div class="col-md-6">
+                <label for="timeFormat" class="form-label">Time Format</label>
+                <input type="text" class="form-control" id="timeFormat" name="time_format" maxlength="50" placeholder="H:i" required />
+              </div>
+            </div>
+            <div class="mt-3">
+              <label for="employeeIdentifierField" class="form-label">Employee Identifier Field</label>
+              <input type="text" class="form-control" id="employeeIdentifierField" name="employee_identifier_field" maxlength="120" required />
+            </div>
+            <div class="mt-3">
+              <label for="expectedHeaders" class="form-label">Expected Headers</label>
+              <textarea class="form-control" id="expectedHeaders" name="expected_headers" rows="4" required></textarea>
+            </div>
+
+            <div class="d-flex align-items-center justify-content-between mt-4">
+              <h6 class="mb-0">Column Mapping</h6>
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="addMappingBtn"
+                aria-label="Add column mapping">
+                <i class="bx bx-plus"></i>
+              </button>
+            </div>
+            <div class="table-responsive mt-2">
+              <table class="table table-sm align-middle" id="mappingTable">
+                <thead>
+                  <tr>
+                    <th>Source Header</th>
+                    <th>Canonical Field</th>
+                    <th>Type</th>
+                    <th>Transform</th>
+                    <th>Required</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="form-check form-switch mt-2">
+              <input class="form-check-input" type="checkbox" id="isActive" name="is_active" checked>
+              <label class="form-check-label" for="isActive">Active</label>
+            </div>
+            <div class="d-flex gap-2 mt-4">
+              <button type="submit" class="btn btn-primary" id="saveTemplateBtn">
+                <i class="bx bx-save me-1"></i>Save template
+              </button>
+              <button type="button" class="btn btn-outline-secondary" id="resetTemplateBtn">Reset</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="employeeWorkspaceDrawer"
+    aria-labelledby="employeeWorkspaceDrawerTitle" style="width:min(960px, 96vw)">
+    <div class="offcanvas-header border-bottom">
+      <div>
+        <h5 class="offcanvas-title mb-1" id="employeeWorkspaceDrawerTitle">Employee workspace</h5>
+        <p class="text-muted mb-0 small" id="employeeWorkspaceDrawerContext">
+          Update the HRIS employee record without leaving the active payroll batch.
+        </p>
+      </div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close employee workspace"></button>
+    </div>
+    <div class="offcanvas-body p-0 d-flex flex-column">
+      <div class="alert alert-info rounded-0 border-0 border-bottom mb-0 py-2 px-3">
+        Your Payroll Workflow batch, search, and filters stay unchanged. Saved employee changes trigger a fresh identity check.
+      </div>
+      <iframe id="employeeWorkspaceFrame" title="Employee management workspace" class="border-0 flex-grow-1"
+        style="width:100%;min-height:0" src="about:blank"></iframe>
+    </div>
+  </div>
+
   <div class="modal fade" id="identityResolutionModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
@@ -1224,7 +1283,7 @@ $canConfigureTemplates = auth_level() === 1;
   </div>
 
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js?v=20260727i"></script>
+  <script src="js/index-01.js?v=20260728a"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 

@@ -10,70 +10,25 @@ class Import{
   public $pay_day = null;
 
   public function spCalculateDTR(){
-        
-    try {
-      $sql = "CALL sp_calculate_dtr(
-                    :client_name
-                    ,:pay_day
-                    ,:cut_off
-              )";
-      $stmt = $this->db->prepare($sql);
-      $stmt->execute([
-        ':client_name' => $this->client_name,
-        ':pay_day' => $this->pay_day,
-        ':cut_off' => $this->cut_off,
-      ]);
-
-      $response = array(
-        "success" => 1
-      );
-
-    } catch (Throwable $e) {
-      error_log('Loans Import::spCalculateDTR failed: ' . $e->getMessage());
-      $response = array(
-        "success" => 0,
-        "error" => "Unable to calculate payroll. No further changes were made."
-      );
- 
-    }
-
-    return $response;
+    return $this->legacyImporterQuarantine();
   }
 
   public function add(array $data, $columnMap){
-    try {
-      $this->db->beginTransaction();
-
-      $columnMap = $columnMap;
-      foreach ($data as $value) {
-        
-        $insert= $this->insertToDatabase($columnMap, $value); 
-          if($insert['success'] == 0){
-            $this->db->rollBack();
-            $response['success'] = 0;
-            $response['message'] = 'Unable to import loan data.';
-            $response['error'] = 'The loan import was rolled back.';
-            return $response;
-          }
-
-      }
-        
-      $this->db->commit();
-      $response['success'] = 1;
-      // $response['sql'] = $insert['sql'];
-      $response['message'] = 'Success';
-    } catch (Throwable $e) {
-      if ($this->db->inTransaction()) {
-        $this->db->rollBack();
-      }
-      error_log('Loans Import::add failed: ' . $e->getMessage());
-      $response['success'] = 0;
-      $response['error'] = "Unable to import loan data.";
-    }
-    return $response;
+    return $this->legacyImporterQuarantine();
   }
 
-  public function insertToDatabase($columnMap, $column_data){
+  private function legacyImporterQuarantine(): array
+  {
+    return [
+      'success' => 0,
+      'code' => 'legacy_loans_dtr_import_quarantined',
+      'error' => 'This retired Loans importer wrote DTR rows and is permanently quarantined.',
+      'mutation_blocked' => true,
+      'recovery_route' => '../dtr-format-engine/',
+    ];
+  }
+
+  private function insertToDatabase($columnMap, $column_data){
     try {
       $date_now = date("Y-m-d H:i:s", time());
       $columnMap_key = array_keys($columnMap);

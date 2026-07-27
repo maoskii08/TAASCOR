@@ -30,4 +30,11 @@ mount_check(!str_contains($nav, 'explode(DIRECTORY_SEPARATOR, __DIR__)'), 'navig
 mount_check(str_contains($nav, 'Location: {$appBaseUrl}/login/'), 'unauthenticated redirect uses the request URL mount');
 mount_check(str_contains($nav, 'Location: {$appBaseUrl}/login/?reason=timeout'), 'timeout redirect uses the request URL mount');
 
+$payrollSummary = (string) file_get_contents(__DIR__ . '/../payroll-summary/index.php');
+mount_check(!str_contains($payrollSummary, '$pathParts[3]'), 'payroll summary no longer reads a missing filesystem path segment');
+mount_check(
+    str_contains($payrollSummary, "\$appBaseUrl . '/login/logout.php'"),
+    'payroll summary logout uses the request URL mount'
+);
+
 echo "RESULT: Navigation mount-path checks passed.\n";

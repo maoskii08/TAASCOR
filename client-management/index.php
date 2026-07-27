@@ -1,3 +1,7 @@
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,2,3]);
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr"
   data-theme="theme-default" data-assets-path="../assets/"

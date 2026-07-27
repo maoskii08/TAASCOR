@@ -1,5 +1,6 @@
 <?php
-session_start();
+require_once(__DIR__ . '/session_security.php');
+taascor_start_secure_session();
 require_once(__DIR__ . '/csrf.php');
 
 // Derive the application mount from the request URL, not the server's
@@ -169,11 +170,43 @@ session_write_close();
                   </div>
                 </a>
               </li>
-              <li style="display:none" class="menu-item" value="38" id="a38">
-                <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/" class="menu-link">
-                  <div class="text-truncate menu-sub-title" data-i18n="DTR Format Engine">DTR Format Engine
+              <li style="display:none" class="menu-item" value="37" id="a37">
+                <a href="/<?php echo $pathParts[6];?>/payroll-data-quality/" class="menu-link">
+                  <div class="text-truncate menu-sub-title" data-i18n="Payroll Data Quality">Payroll Data Quality
                   </div>
                 </a>
+              </li>
+              <li style="display:none" class="menu-item" value="39" id="a39" data-secondary-navigation="true">
+                <a href="/<?php echo $pathParts[6];?>/payroll-help/" class="menu-link">
+                  <div class="text-truncate menu-sub-title" data-i18n="Payroll Help">Payroll Help &amp; FAQ</div>
+                </a>
+              </li>
+              <li style="display:none" class="menu-item master" value="38" id="a38">
+                <a href="javascript:void(0);" class="menu-link menu-toggle">
+                  <div class="text-truncate menu-sub-title" data-i18n="Payroll Workflow">Payroll Workflow</div>
+                </a>
+                <ul class="menu-sub">
+                  <li class="menu-item">
+                    <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/" class="menu-link">
+                      <div class="text-truncate menu-sub-title">Workflow Overview</div>
+                    </a>
+                  </li>
+                  <li class="menu-item">
+                    <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/#smart-employee-resolution" class="menu-link">
+                      <div class="text-truncate menu-sub-title">Smart Employee Alignment</div>
+                    </a>
+                  </li>
+                  <li class="menu-item">
+                    <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/#employee-identity-review" class="menu-link">
+                      <div class="text-truncate menu-sub-title">Employee Identity Exceptions</div>
+                    </a>
+                  </li>
+                  <li class="menu-item">
+                    <a href="/<?php echo $pathParts[6];?>/dtr-format-engine/#payroll-population-review" class="menu-link">
+                      <div class="text-truncate menu-sub-title">DTR &amp; Payslip Review</div>
+                    </a>
+                  </li>
+                </ul>
               </li>
               <li style="display:none" class="menu-item" value="31" id="a31">
                 <a href="/<?php echo $pathParts[6];?>/dtr-upload/" class="menu-link">

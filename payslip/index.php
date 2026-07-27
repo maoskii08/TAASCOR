@@ -216,7 +216,8 @@ auth_require_role([1, 3]);
                     <br>
                     <button id="filterBtn" class="btn btn-md btn-primary">Generate Payroll</button>
                     <button id="payslipBtn" class="btn btn-md btn-primary">Generate Payslip</button>
-                    <button id="postBtn" class="btn btn-md btn-danger">Post Payroll</button>
+                    <button id="postBtn" class="btn btn-md btn-danger" disabled
+                      title="Generate payroll and pass the release controls before posting.">Post Payroll</button>
                     <button id="clearBtn" class="btn btn-md btn-secondary">Clear</button>
                   </div>
                 </div>
@@ -230,6 +231,8 @@ auth_require_role([1, 3]);
                     <small class="text-muted">Posting is tied to this exact reconciled run and its verified payslip artifacts.</small>
                   </div>
                 </div>
+                <div class="alert alert-warning mt-3 mb-0" id="payrollReleaseGateStatus"
+                  role="status" style="display:none"></div>
 
               </div>
             </div>
@@ -269,7 +272,7 @@ auth_require_role([1, 3]);
     <!-- / Layout wrapper -->
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-09.js?v=20260531"></script>
+    <script src="js/index-09.js?v=20260727-phase0"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>

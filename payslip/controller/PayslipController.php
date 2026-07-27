@@ -16,8 +16,45 @@ $model = new Payslip;
 $model->db = $pdoConn;
 $model->actor = auth_user();
 $model->run_id = isset($_POST['run_id']) ? (int)$_POST['run_id'] : null;
+$model->allowed_client_ids = auth_client_ids();
+$model->allow_all_clients = auth_has_global_client_access();
+$request = (string)($_POST['request'] ?? '');
 
-if($_POST['request'] == 'get-payroll-summary'){
+function requirePayslipClientAccess(PDO $db, string $clientName): int
+{
+    $clientName = trim($clientName);
+    if ($clientName === '') {
+        http_response_code(400);
+        echo json_encode(['success' => 0, 'error' => 'A client is required.']);
+        exit;
+    }
+    $stmt = $db->prepare('SELECT client_id FROM taascor_client WHERE client_name = :client LIMIT 1');
+    $stmt->execute([':client' => $clientName]);
+    $clientId = $stmt->fetchColumn();
+    if ($clientId === false) {
+        http_response_code(404);
+        echo json_encode(['success' => 0, 'error' => 'The requested client was not found.']);
+        exit;
+    }
+    auth_require_client_id((int)$clientId);
+    return (int)$clientId;
+}
+
+$clientFields = [
+    'get-payroll-summary' => 'client',
+    'get-metro-bank' => 'client',
+    'get-gcash' => 'client',
+    'get-pnb' => 'client',
+    'get-pay-day' => 'client_selected',
+    'get-client-location' => 'client_selected',
+    'post-payroll' => 'client',
+    'get-branch' => 'client_selected',
+];
+if (isset($clientFields[$request])) {
+    requirePayslipClientAccess($pdoConn, (string)($_POST[$clientFields[$request]] ?? ''));
+}
+
+if($request == 'get-payroll-summary'){
     $response['columns'] = [];
     $response['columns2'] = [];
     $response['data'] = [];
@@ -120,13 +157,13 @@ if($_POST['request'] == 'get-payroll-summary'){
 
     echo json_encode($response);
 
-}else if($_POST['request'] == 'get-client-filter'){
+}else if($request == 'get-client-filter'){
     echo json_encode($model->getClientFilter());
-}else if($_POST['request'] == 'get-pay-type'){
+}else if($request == 'get-pay-type'){
     echo json_encode($model->getPayType());
-}else if($_POST['request'] == 'get-bank-name'){
+}else if($request == 'get-bank-name'){
     echo json_encode($model->getBankName());
-}else if($_POST['request'] == 'get-metro-bank'){
+}else if($request == 'get-metro-bank'){
     $response['data'] = [];
 
     $model->client = $_POST["client"];
@@ -141,7 +178,7 @@ if($_POST['request'] == 'get-payroll-summary'){
         $response['error'] = $getMetroBank['error'];
     }
     echo json_encode($response);
-}else if($_POST['request'] == 'get-gcash'){
+}else if($request == 'get-gcash'){
     $response['data'] = [];
 
     $model->client = $_POST["client"];
@@ -156,7 +193,7 @@ if($_POST['request'] == 'get-payroll-summary'){
         $response['error'] = $getGcash['error'];
     }
     echo json_encode($response);
-}else if($_POST['request'] == 'get-pnb'){
+}else if($request == 'get-pnb'){
     $response['data'] = [];
 
     $model->client = $_POST["client"];
@@ -172,13 +209,13 @@ if($_POST['request'] == 'get-payroll-summary'){
         $response['error'] = $getPNB['error'];
     }
     echo json_encode($response);
-}else if($_POST['request'] == 'get-pay-day'){
+}else if($request == 'get-pay-day'){
     $model->client = $_POST["client_selected"];
     echo json_encode($model->getPayDayFilter());
-}else if($_POST['request'] == 'get-client-location'){
+}else if($request == 'get-client-location'){
     $model->client = $_POST["client_selected"];
     echo json_encode($model->getClientLocation());
-}else if($_POST['request'] == 'post-payroll'){
+}else if($request == 'post-payroll'){
     $model->client  = $_POST["client"];
     $model->pay_day = $_POST["pay_day"];
     $result = $model->postPayroll();
@@ -186,7 +223,7 @@ if($_POST['request'] == 'get-payroll-summary'){
         log_action("Payroll Locked: {$_POST['client']} | Pay Day: {$_POST['pay_day']}");
     }
     echo json_encode($result);
-}else if($_POST['request'] == 'get-branch'){
+}else if($request == 'get-branch'){
     $model->client = $_POST["client_selected"];
     echo json_encode($model->getBranch());
 }else {

@@ -22,7 +22,6 @@ if($_POST['request'] == 'get-loan-list'){
 
     if(isset($getList['error']) == false){
         $response['success'] = 1;
-        $response['sql'] = $getList['sql'];
 
         if(count($getList['data']) > 0){
             foreach ($getList['data'] as $key => $row) {
@@ -58,7 +57,6 @@ if($_POST['request'] == 'get-loan-list'){
         }   
     } else{
         $response['error'] = $getList['error'];
-        $response['sql'] = $getList['sql'];
     }
 
     echo json_encode($response);
@@ -75,11 +73,9 @@ if($_POST['request'] == 'get-loan-list'){
             $response['monthly'] = $hasPayDay['monthly'];
         }else{
             $response['success'] = 3;
-            $response['sql'] = $hasPayDay['sql'];
         }
     }else{
         $response['success'] = 2;
-        $response['sql'] = $userExists['sql'];
     }
 
     echo json_encode($response);
