@@ -22,6 +22,10 @@ var dtrPopulationRequestSequence = 0;
 var dtrAdapterProfiles = [];
 var dtrApprovedAdapterProfiles = [];
 
+function localPreviewDiagnosticsEnabled() {
+    return String($('body').attr('data-enable-local-previews') || '') === '1';
+}
+
 $(document).ready(function () {
     resetTemplateForm();
     bindDtrEngineEvents();
@@ -30,9 +34,11 @@ $(document).ready(function () {
     loadTemplates();
     loadAdapterRegistry();
     loadBatches();
-    loadAdapterApprovalWorkflow();
-    loadAdapterPreviewWorkflow();
-    loadPayrollBasisPreview();
+    if (localPreviewDiagnosticsEnabled()) {
+        loadAdapterApprovalWorkflow();
+        loadAdapterPreviewWorkflow();
+        loadPayrollBasisPreview();
+    }
     loadIdentityNotifications(true);
     dtrIdentityNotificationTimer = window.setInterval(function () {
         loadIdentityNotifications(false);
@@ -1026,6 +1032,9 @@ function renderRealSampleAdapterResults(results) {
 }
 
 function loadAdapterPreviewWorkflow() {
+    if (!localPreviewDiagnosticsEnabled()) {
+        return;
+    }
     $.ajax({
         url: 'controller/TemplateController.php',
         type: 'GET',
@@ -1111,6 +1120,9 @@ function runPayrollBasisPreview() {
 }
 
 function loadPayrollBasisPreview() {
+    if (!localPreviewDiagnosticsEnabled()) {
+        return;
+    }
     $.ajax({
         url: 'controller/TemplateController.php',
         type: 'GET',
@@ -1180,6 +1192,9 @@ function renderPayrollBasisRows(rows) {
 }
 
 function loadAdapterApprovalWorkflow() {
+    if (!localPreviewDiagnosticsEnabled()) {
+        return;
+    }
     $.ajax({
         url: 'controller/TemplateController.php',
         type: 'GET',

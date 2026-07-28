@@ -2,6 +2,12 @@
 require_once('../includes/auth_guard.php');
 auth_require_role([1, 2, 3]);
 $canConfigureTemplates = auth_level() === 1;
+$hostName = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+$hostName = explode(':', $hostName, 2)[0];
+$localPreviewOverride = getenv('TAASCOR_ENABLE_LOCAL_PREVIEWS');
+$enableLocalPreviewDiagnostics = $localPreviewOverride !== false
+  ? filter_var($localPreviewOverride, FILTER_VALIDATE_BOOLEAN)
+  : in_array($hostName, ['localhost', '127.0.0.1', '::1'], true);
 ?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
@@ -28,7 +34,8 @@ $canConfigureTemplates = auth_level() === 1;
 
 <body
   data-can-configure-templates="<?php echo $canConfigureTemplates ? '1' : '0'; ?>"
-  data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2], true) ? '1' : '0'; ?>">
+  data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2], true) ? '1' : '0'; ?>"
+  data-enable-local-previews="<?php echo $enableLocalPreviewDiagnostics ? '1' : '0'; ?>">
   <div class="layout-wrapper layout-content-navbar">
     <div class="layout-container">
       <?php require('../includes/nav-bar.php') ?>
@@ -512,6 +519,7 @@ $canConfigureTemplates = auth_level() === 1;
 
             <div class="row g-4">
               <div class="col-12">
+                <?php if ($enableLocalPreviewDiagnostics): ?>
                 <div class="card mb-4">
                   <div class="card-header d-flex align-items-center justify-content-between">
                     <h5 class="mb-0">Synthetic Validation Preview</h5>
@@ -901,6 +909,7 @@ $canConfigureTemplates = auth_level() === 1;
                     </div>
                   </div>
                 </div>
+                <?php endif; ?>
 
                 <div class="card">
                   <div class="card-header">
@@ -1283,7 +1292,7 @@ $canConfigureTemplates = auth_level() === 1;
   </div>
 
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js?v=20260728a"></script>
+  <script src="js/index-01.js?v=20260728b"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 

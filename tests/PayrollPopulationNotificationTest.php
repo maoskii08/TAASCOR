@@ -22,7 +22,19 @@ $checks = [
     [substr_count($controller, 'syncPopulationNotification(') >= 3, 'import, resolution, and explicit sync update notification state'],
     [str_contains($page, 'id="notifyPopulationOwnersBtn"'), 'review queue exposes an owner-notification action'],
     [str_contains($script, 'syncPayrollPopulationNotification'), 'owner-notification action calls the protected endpoint'],
-    [str_contains($page, 'index-01.js?v=20260728a'), 'updated workflow script is cache-busted'],
+    [str_contains($page, 'index-01.js?v=20260728b'), 'updated workflow script is cache-busted'],
+    [
+        str_contains($page, 'TAASCOR_ENABLE_LOCAL_PREVIEWS')
+            && str_contains($page, 'data-enable-local-previews')
+            && str_contains($page, 'if ($enableLocalPreviewDiagnostics)'),
+        'local engineering previews are disabled outside localhost unless explicitly enabled',
+    ],
+    [
+        str_contains($script, 'function localPreviewDiagnosticsEnabled()')
+            && str_contains($script, 'if (!localPreviewDiagnosticsEnabled())')
+            && str_contains($script, 'if (localPreviewDiagnosticsEnabled())'),
+        'local-only preview requests fail closed before production AJAX calls',
+    ],
 ];
 
 foreach ($checks as [$passed, $message]) {

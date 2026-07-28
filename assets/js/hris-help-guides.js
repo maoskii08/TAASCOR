@@ -447,6 +447,7 @@
                 'Fuji is one specialized adapter behind the same registry; it does not define the workflow for other clients.',
                 'Unknown formats remain blocked until a versioned adapter is created, tested, and independently approved.',
                 'The template drawer separates occasional format administration from day-to-day upload and reconciliation work.',
+                'Synthetic and real-sample engineering previews are local diagnostics. Production uses the governed template registry, approved adapters, and staged upload controls.',
                 'Safe means eligible for explicit owner approval; it does not mean the system silently maps employees.',
                 'Smart Employee Alignment proposes and approves matches; Employee Identity Exceptions corrects the remaining master-data or evidence blockers.',
                 'The employee drawer preserves the selected batch, search text, and exception filter while Employee Management saves the record.',
