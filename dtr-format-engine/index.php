@@ -385,9 +385,16 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
                       <h6 class="mb-1">Guarded payroll import run</h6>
                       <small class="text-muted">Creates one immutable run-scoped DTR snapshot only after every staged identity and row passes. Legacy payroll remains untouched.</small>
                     </div>
-                    <button type="button" class="btn btn-sm btn-outline-primary" id="createPayrollImportRunBtn" disabled>
-                      <i class="bx bx-layer-plus me-1"></i>Create canonical snapshot
-                    </button>
+                    <div class="d-flex flex-wrap gap-2">
+                      <button type="button" class="btn btn-sm btn-outline-secondary" id="managePayrollRulesBtn"
+                        data-bs-toggle="offcanvas" data-bs-target="#payrollRulesDrawer"
+                        aria-controls="payrollRulesDrawer">
+                        <i class="bx bx-slider-alt me-1"></i>Payroll rules
+                      </button>
+                      <button type="button" class="btn btn-sm btn-outline-primary" id="createPayrollImportRunBtn" disabled>
+                        <i class="bx bx-layer-plus me-1"></i>Create canonical snapshot
+                      </button>
+                    </div>
                   </div>
                   <div class="row g-3 mt-1">
                     <div class="col-sm-6 col-xl-3"><span class="text-muted d-block">Run</span><strong id="payrollImportRunUid">Not created</strong></div>
@@ -1207,6 +1214,114 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
     </div>
   </div>
 
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="payrollRulesDrawer"
+    aria-labelledby="payrollRulesDrawerTitle" style="width:min(900px, 96vw)">
+    <div class="offcanvas-header border-bottom align-items-start">
+      <div class="me-3">
+        <h5 class="offcanvas-title mb-1" id="payrollRulesDrawerTitle">Payroll ruleset registry</h5>
+        <p class="text-muted mb-0 small">
+          Configure the immutable client rules that apply to a specific payroll date.
+        </p>
+      </div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close payroll ruleset registry"></button>
+    </div>
+    <div class="offcanvas-body">
+      <div class="alert alert-warning" id="payrollRulesGuidance">
+        Use only an approved payroll policy package. Rule versions are immutable after creation, and effective-date overlaps are blocked.
+      </div>
+
+      <div class="card mb-4">
+        <div class="card-header">
+          <h5 class="mb-1">Create an approved ruleset version</h5>
+          <small class="text-muted">Admin and Payroll owners can create a version after reviewing the complete source policy.</small>
+        </div>
+        <div class="card-body">
+          <form id="payrollRulesForm" autocomplete="off">
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label" for="payrollRulesClientId">Client</label>
+                <select class="form-select" id="payrollRulesClientId" name="client_id" required>
+                  <option value="">Select client</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" for="payrollRulesEffectiveFrom">Effective from</label>
+                <input class="form-control" type="date" id="payrollRulesEffectiveFrom" name="effective_from" required>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" for="payrollRulesEffectiveTo">Effective to</label>
+                <input class="form-control" type="date" id="payrollRulesEffectiveTo" name="effective_to">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="payrollRulesKey">Ruleset key</label>
+                <input class="form-control" id="payrollRulesKey" name="ruleset_key"
+                  maxlength="120" placeholder="CLIENT_PAYROLL_POLICY" required>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="payrollRulesVersion">Version</label>
+                <input class="form-control" id="payrollRulesVersion" name="ruleset_version"
+                  maxlength="80" placeholder="2026.07" required>
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="payrollRulesPayload">Approved rule manifest</label>
+                <textarea class="form-control font-monospace" id="payrollRulesPayload" name="rules_payload"
+                  rows="10" spellcheck="false" required
+                  placeholder='[{"rule_type":"policy category","rule_key":"approved source key","rule_version":"source version","effective_from":"YYYY-MM-DD","snapshot":{"source_document":"approved policy reference","configuration":{}}}]'></textarea>
+                <small class="text-muted">
+                  Include every statutory, timekeeping, overtime, holiday, deduction, loan, tax, and rounding rule used by this payroll.
+                </small>
+              </div>
+              <div class="col-12">
+                <label class="form-label" for="payrollRulesApprovalReason">Approval evidence</label>
+                <textarea class="form-control" id="payrollRulesApprovalReason" name="approval_reason"
+                  rows="3" maxlength="1000" required
+                  placeholder="Identify the approved policy, statutory source, client authorization, reviewer, and validation evidence."></textarea>
+              </div>
+            </div>
+            <div id="payrollRulesStatus" class="alert mt-3 mb-0" style="display:none"></div>
+            <div class="d-flex flex-wrap justify-content-end gap-2 mt-3">
+              <button type="button" class="btn btn-outline-secondary" id="resetPayrollRulesBtn">Clear form</button>
+              <button type="submit" class="btn btn-primary" id="savePayrollRulesBtn">
+                <i class="bx bx-lock-alt me-1"></i>Create approved version
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div>
+            <h5 class="mb-1">Approved versions</h5>
+            <small class="text-muted">Exactly one version must cover the selected payroll date.</small>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="refreshPayrollRulesBtn">
+            <i class="bx bx-refresh me-1"></i>Refresh
+          </button>
+        </div>
+        <div class="card-body">
+          <div class="table-responsive">
+            <table class="table table-sm table-bordered align-middle" id="payrollRulesTable">
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Version</th>
+                  <th>Effective</th>
+                  <th>Status</th>
+                  <th>Approved by</th>
+                  <th>Hash</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="6" class="text-center text-muted">Select a client to review rulesets.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="offcanvas offcanvas-end" tabindex="-1" id="employeeWorkspaceDrawer"
     aria-labelledby="employeeWorkspaceDrawerTitle" style="width:min(960px, 96vw)">
     <div class="offcanvas-header border-bottom">
@@ -1294,7 +1409,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
   </div>
 
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js?v=20260728d"></script>
+  <script src="js/index-01.js?v=20260728e"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 

@@ -21,6 +21,7 @@ var dtrSmartIdentityReady = false;
 var dtrPopulationRequestSequence = 0;
 var dtrAdapterProfiles = [];
 var dtrApprovedAdapterProfiles = [];
+var dtrPayrollRuleSets = [];
 
 function localPreviewDiagnosticsEnabled() {
     return String($('body').attr('data-enable-local-previews') || '') === '1';
@@ -77,6 +78,29 @@ function bindDtrEngineEvents() {
     $('#dtrTemplateDrawer').on('shown.bs.offcanvas', function () {
         loadTemplates();
     });
+
+    $('#payrollRulesDrawer').on('shown.bs.offcanvas', function () {
+        preparePayrollRulesDrawer();
+    });
+
+    $('#payrollRulesClientId').on('change', function () {
+        loadPayrollRuleSets();
+    });
+
+    $('#refreshPayrollRulesBtn').on('click', function () {
+        loadPayrollRuleSets();
+    });
+
+    $('#resetPayrollRulesBtn').on('click', function () {
+        resetPayrollRulesForm(true);
+    });
+
+    $('#payrollRulesForm').on('submit', function (event) {
+        event.preventDefault();
+        savePayrollRuleSet();
+    });
+
+    document.addEventListener('hris:resolve-error', handleActionableErrorRoute);
 
     $('#templatesTable').on('click', '.deactivate-template', function () {
         deactivateTemplate($(this).data('id'));
@@ -288,6 +312,7 @@ function loadLookups() {
             dtrEngineLookups = response;
             renderLookupOptions();
             rebuildMappingCanonicalOptions();
+            initializePayrollRulesDeepLink();
         },
         error: function () {
             showDtrEngineError('Unable to load DTR Format Engine lookups.');
@@ -302,6 +327,7 @@ function renderLookupOptions() {
     $('#realDtrClientId').html('<option value="">Select client</option>' + dtrEngineLookups.clients.map(function (client) {
         return '<option value="' + escapeHtml(client.client_id) + '">' + escapeHtml(client.client_name) + '</option>';
     }).join(''));
+    renderPayrollRulesClientOptions();
 
     $('#locationId').html('<option value="">Any site</option>' + dtrEngineLookups.locations.map(function (location) {
         return '<option value="' + escapeHtml(location.location_id) + '">' + escapeHtml(location.location_name) + '</option>';
@@ -314,6 +340,222 @@ function renderLookupOptions() {
     $('#fileType').html(dtrEngineLookups.file_types.map(function (type) {
         return '<option value="' + escapeHtml(type) + '">' + escapeHtml(type) + '</option>';
     }).join(''));
+}
+
+function renderPayrollRulesClientOptions() {
+    var selected = String($('#payrollRulesClientId').val() || '');
+    var options = '<option value="">Select client</option>' + dtrEngineLookups.clients.map(function (client) {
+        return '<option value="' + escapeHtml(client.client_id) + '">' + escapeHtml(client.client_name) + '</option>';
+    }).join('');
+    $('#payrollRulesClientId').html(options);
+    if (selected && $('#payrollRulesClientId option[value="' + selected.replace(/"/g, '') + '"]').length) {
+        $('#payrollRulesClientId').val(selected);
+    }
+}
+
+function handleActionableErrorRoute(event) {
+    var detail = event.detail || {};
+    if (detail.action !== 'payroll-rules') {
+        return;
+    }
+    event.preventDefault();
+    openPayrollRulesDrawer(detail.context || {});
+}
+
+function initializePayrollRulesDeepLink() {
+    var params = new URLSearchParams(window.location.search);
+    if (window.location.hash !== '#payroll-rules' && params.get('resolve') !== 'payroll-rules') {
+        return;
+    }
+    openPayrollRulesDrawer({
+        clientId: params.get('client_id') || '',
+        payDate: params.get('pay_date') || ''
+    });
+}
+
+function openPayrollRulesDrawer(context) {
+    context = context || {};
+    renderPayrollRulesClientOptions();
+    var params = new URLSearchParams(window.location.search);
+    var clientId = String(context.clientId || params.get('client_id') || $('#realDtrClientId').val() || '');
+    var payDate = String(context.payDate || params.get('pay_date') || '').trim();
+    if (clientId && $('#payrollRulesClientId option[value="' + clientId.replace(/"/g, '') + '"]').length) {
+        $('#payrollRulesClientId').val(clientId);
+    }
+    if (payDate && !$('#payrollRulesEffectiveFrom').val()) {
+        $('#payrollRulesEffectiveFrom').val(payDate);
+    }
+    var drawerElement = document.getElementById('payrollRulesDrawer');
+    if (drawerElement && window.bootstrap && bootstrap.Offcanvas) {
+        bootstrap.Offcanvas.getOrCreateInstance(drawerElement).show();
+    }
+}
+
+function preparePayrollRulesDrawer() {
+    renderPayrollRulesClientOptions();
+    var params = new URLSearchParams(window.location.search);
+    var clientId = String(params.get('client_id') || $('#payrollRulesClientId').val() || $('#realDtrClientId').val() || '');
+    if (clientId && $('#payrollRulesClientId option[value="' + clientId.replace(/"/g, '') + '"]').length) {
+        $('#payrollRulesClientId').val(clientId);
+    }
+    var payDate = String(params.get('pay_date') || '').trim();
+    if (payDate && !$('#payrollRulesEffectiveFrom').val()) {
+        $('#payrollRulesEffectiveFrom').val(payDate);
+    }
+    loadPayrollRuleSets();
+}
+
+function loadPayrollRuleSets() {
+    var clientId = Number($('#payrollRulesClientId').val() || 0);
+    if (clientId <= 0) {
+        dtrPayrollRuleSets = [];
+        $('#payrollRulesTable tbody').html(
+            '<tr><td colspan="6" class="text-center text-muted">Select a client to review rulesets.</td></tr>'
+        );
+        return;
+    }
+    $('#payrollRulesTable tbody').html(
+        '<tr><td colspan="6" class="text-center text-muted">Loading approved rulesets...</td></tr>'
+    );
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'GET',
+        dataType: 'json',
+        data: {
+            request: 'payroll-rule-sets',
+            client_id: clientId
+        },
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showPayrollRulesError(response || {
+                    error_code: 'RULESET_LOAD_FAILED',
+                    error: 'Unable to load the payroll ruleset registry.'
+                });
+                return;
+            }
+            dtrPayrollRuleSets = response.data || [];
+            renderPayrollRuleSets();
+        },
+        error: function () {
+            showPayrollRulesError({
+                error_code: 'CONNECTION_FAILED',
+                error: 'Unable to load the payroll ruleset registry.'
+            });
+        }
+    });
+}
+
+function renderPayrollRuleSets() {
+    if (!dtrPayrollRuleSets.length) {
+        $('#payrollRulesTable tbody').html(
+            '<tr><td colspan="6" class="text-center text-muted">'
+            + 'No approved ruleset exists for this client. Create a version from an authorized policy package.'
+            + '</td></tr>'
+        );
+        return;
+    }
+    $('#payrollRulesTable tbody').html(dtrPayrollRuleSets.map(function (ruleset) {
+        var effective = String(ruleset.effective_from || '')
+            + (ruleset.effective_to ? ' to ' + String(ruleset.effective_to) : ' onward');
+        var hash = String(ruleset.rules_hash || '');
+        return '<tr>'
+            + '<td>' + escapeHtml(ruleset.ruleset_key || '') + '</td>'
+            + '<td>' + escapeHtml(ruleset.ruleset_version || '') + '</td>'
+            + '<td>' + escapeHtml(effective) + '</td>'
+            + '<td><span class="badge bg-label-success">' + escapeHtml(ruleset.ruleset_status || '') + '</span></td>'
+            + '<td>' + escapeHtml(ruleset.approved_by || '') + '<br><small class="text-muted">'
+            + escapeHtml(ruleset.approved_at || '') + '</small></td>'
+            + '<td><code>' + escapeHtml(hash.slice(0, 12)) + '</code></td>'
+            + '</tr>';
+    }).join(''));
+}
+
+function resetPayrollRulesForm(preserveClient) {
+    var clientId = preserveClient ? String($('#payrollRulesClientId').val() || '') : '';
+    document.getElementById('payrollRulesForm').reset();
+    if (clientId) {
+        $('#payrollRulesClientId').val(clientId);
+    }
+    $('#payrollRulesStatus').hide().empty();
+}
+
+function savePayrollRuleSet() {
+    var payloadText = String($('#payrollRulesPayload').val() || '').trim();
+    var approvalReason = String($('#payrollRulesApprovalReason').val() || '').trim();
+    try {
+        var payload = JSON.parse(payloadText);
+        if (!Array.isArray(payload) || payload.length === 0) {
+            throw new Error('manifest');
+        }
+    } catch (error) {
+        showPayrollRulesError({
+            error_code: 'RULESET_MANIFEST_INVALID',
+            error: 'The approved rule manifest must be a non-empty JSON array.'
+        });
+        $('#payrollRulesPayload').trigger('focus');
+        return;
+    }
+    if (approvalReason.length < 20) {
+        showPayrollRulesError({
+            error_code: 'RULESET_EVIDENCE_REQUIRED',
+            error: 'Approval evidence must identify the reviewed policy source and validation performed.'
+        });
+        $('#payrollRulesApprovalReason').trigger('focus');
+        return;
+    }
+
+    $('#savePayrollRulesBtn').prop('disabled', true)
+        .html('<span class="spinner-border spinner-border-sm me-1"></span>Creating version');
+    $.ajax({
+        url: 'controller/TemplateController.php',
+        type: 'POST',
+        dataType: 'json',
+        data: $('#payrollRulesForm').serialize() + '&request=save-payroll-rule-set&csrf_token='
+            + encodeURIComponent($('#csrf_token').val() || ''),
+        success: function (response) {
+            if (!response || response.success !== 1) {
+                showPayrollRulesError(response || {
+                    error_code: 'RULESET_SAVE_FAILED',
+                    error: 'Unable to create the approved payroll ruleset version.'
+                });
+                return;
+            }
+            resetPayrollRulesForm(true);
+            $('#payrollRulesStatus')
+                .removeClass('alert-danger alert-warning hris-actionable-host')
+                .removeAttr('data-hris-actionable data-hris-error-code')
+                .addClass('alert-success')
+                .text('Approved ruleset version created. Retry the canonical snapshot for the same payroll batch.')
+                .show();
+            loadPayrollRuleSets();
+        },
+        error: function () {
+            showPayrollRulesError({
+                error_code: 'CONNECTION_FAILED',
+                error: 'Unable to create the approved payroll ruleset version.'
+            });
+        },
+        complete: function () {
+            $('#savePayrollRulesBtn').prop('disabled', false)
+                .html('<i class="bx bx-lock-alt me-1"></i>Create approved version');
+        }
+    });
+}
+
+function showPayrollRulesError(response) {
+    var status = document.getElementById('payrollRulesStatus');
+    $('#payrollRulesStatus').removeClass('alert-success alert-warning').addClass('alert-danger').show();
+    if (window.HrisActionableErrors) {
+        HrisActionableErrors.render(status, response, {
+            title: 'Payroll ruleset configuration needs attention',
+            actionLabel: 'Review ruleset fields',
+            onAction: function () {
+                $('#payrollRulesForm').get(0).scrollIntoView({behavior: 'smooth', block: 'start'});
+            }
+        });
+        return;
+    }
+    $('#payrollRulesStatus').text(response && response.error ? response.error : 'Unable to complete the ruleset action.');
 }
 
 function rebuildMappingCanonicalOptions() {
@@ -1729,11 +1971,19 @@ function loadLatestPayrollImportRun(batchId) {
                     renderPayrollImportRun(null, null);
                     return;
                 }
-                $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
-                    .text(response && response.error ? response.error : 'Unable to load the guarded payroll run.');
+                showPayrollImportRunError(response || {
+                    error_code: 'PAYROLL_RUN_LOAD_FAILED',
+                    error: 'Unable to load the guarded payroll run.'
+                }, batchId);
                 return;
             }
             renderPayrollImportRun(response.run || {}, response.gate || {});
+        },
+        error: function () {
+            showPayrollImportRunError({
+                error_code: 'CONNECTION_FAILED',
+                error: 'Unable to load the guarded payroll run.'
+            }, batchId);
         }
     });
 }
@@ -1757,16 +2007,20 @@ function createPayrollImportRun() {
         },
         success: function (response) {
             if (!response || response.success !== 1) {
-                $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
-                    .text(response && response.error ? response.error : 'Unable to create the guarded payroll snapshot.');
+                showPayrollImportRunError(response || {
+                    error_code: 'PAYROLL_SNAPSHOT_FAILED',
+                    error: 'Unable to create the guarded payroll snapshot.'
+                }, batchId);
                 return;
             }
             $('#dtrEngineAlert').hide();
             loadLatestPayrollImportRun(batchId);
         },
         error: function () {
-            $('#payrollImportRunStatus').removeClass('alert-warning alert-success').addClass('alert-danger')
-                .text('Unable to create the guarded payroll snapshot.');
+            showPayrollImportRunError({
+                error_code: 'CONNECTION_FAILED',
+                error: 'Unable to create the guarded payroll snapshot.'
+            }, batchId);
         },
         complete: function () {
             $('#createPayrollImportRunBtn').html('<i class="bx bx-layer-plus me-1"></i>Create canonical snapshot');
@@ -1775,9 +2029,33 @@ function createPayrollImportRun() {
     });
 }
 
+function clearActionableErrorHost($element) {
+    $element
+        .removeClass('hris-actionable-host')
+        .removeAttr('data-hris-actionable data-hris-error-code');
+}
+
+function showPayrollImportRunError(response, batchId) {
+    var $status = $('#payrollImportRunStatus');
+    clearActionableErrorHost($status);
+    $status.removeClass('alert-warning alert-success').addClass('alert-danger').show();
+    if (window.HrisActionableErrors) {
+        HrisActionableErrors.render($status.get(0), response, {
+            context: {
+                clientId: response && response.client_id ? response.client_id : $('#realDtrClientId').val(),
+                payDate: response && response.pay_date ? response.pay_date : '',
+                batchId: batchId || $('#smartBatchFilter').val()
+            }
+        });
+        return;
+    }
+    $status.text(response && response.error ? response.error : 'Unable to complete the guarded payroll action.');
+}
+
 function renderPayrollImportRun(run, gate) {
     run = run || null;
     gate = gate || {};
+    clearActionableErrorHost($('#payrollImportRunStatus'));
     if (!run || !run.id) {
         dtrCurrentPayrollImportRunId = 0;
         $('#payrollImportRunUid').text('Not created');
@@ -2554,14 +2832,25 @@ function applyDtrEngineRoleCapabilities() {
         $('#approveSmartCohortBtn').prop('disabled', true);
     }
     if (!canConfigure) {
-        $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input, #adapterProfileForm :input, #adapterApprovalProfileId, #adapterApprovalReason, #approveAdapterProfileBtn')
+        $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input, #adapterProfileForm :input, #adapterApprovalProfileId, #adapterApprovalReason, #approveAdapterProfileBtn, #payrollRulesForm :input')
             .prop('disabled', true);
         $('#saveTemplateBtn').text('Admin or Payroll configuration only');
+        $('#savePayrollRulesBtn').text('Admin or Payroll configuration only');
     }
 }
 
-function showDtrEngineError(message) {
-    $('#dtrEngineAlert').text(message).show();
+function showDtrEngineError(error) {
+    var response = error && typeof error === 'object'
+        ? error
+        : {error: String(error || 'Unable to complete this action.')};
+    var $alert = $('#dtrEngineAlert');
+    clearActionableErrorHost($alert);
+    $alert.removeClass('alert-success alert-warning').addClass('alert-danger').show();
+    if (window.HrisActionableErrors) {
+        HrisActionableErrors.render($alert.get(0), response);
+        return;
+    }
+    $alert.text(response.error);
 }
 
 function escapeHtml(value) {

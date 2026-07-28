@@ -138,7 +138,11 @@ function approved_payroll_ruleset($db, int $batchId): array
     $stmt->execute([':batch_id' => $batchId]);
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     if (!$rows) {
-        return ['success' => 0, 'error' => 'The staged batch has no eligible rows.'];
+        return [
+            'success' => 0,
+            'error_code' => 'STAGED_BATCH_EMPTY',
+            'error' => 'The staged batch has no eligible rows. Review the row validation results before creating a snapshot.',
+        ];
     }
     $clientId = (int)$rows[0]['client_id'];
     $payDates = [];
@@ -150,7 +154,12 @@ function approved_payroll_ruleset($db, int $batchId): array
         }
     }
     if (count($payDates) !== 1) {
-        return ['success' => 0, 'error' => 'The staged batch needs one unambiguous pay date before rule selection.'];
+        return [
+            'success' => 0,
+            'error_code' => 'BATCH_PAY_DATE_REQUIRED',
+            'client_id' => $clientId,
+            'error' => 'The staged batch needs one unambiguous pay date before rule selection.',
+        ];
     }
     $payDate = array_key_first($payDates);
     $ruleset = $db->prepare("\n        SELECT * FROM payroll_import_rule_sets
@@ -165,7 +174,9 @@ function approved_payroll_ruleset($db, int $batchId): array
     if (count($matches) !== 1) {
         return [
             'success' => 0,
-            'error_code' => 'APPROVED_RULESET_REQUIRED',
+            'error_code' => count($matches) === 0 ? 'APPROVED_RULESET_REQUIRED' : 'RULESET_EFFECTIVE_OVERLAP',
+            'client_id' => $clientId,
+            'pay_date' => $payDate,
             'error' => count($matches) === 0
                 ? 'No approved, effective-dated payroll ruleset is configured for this client and pay date.'
                 : 'More than one approved payroll ruleset overlaps this pay date. Resolve the governance conflict first.',
@@ -174,7 +185,13 @@ function approved_payroll_ruleset($db, int $batchId): array
     $rules = json_decode((string)$matches[0]['rules_payload'], true);
     if (!is_array($rules)
         || !hash_equals((string)$matches[0]['rules_hash'], hash('sha256', PayrollImportRunManager::canonicalJson($rules)))) {
-        return ['success' => 0, 'error_code' => 'RULESET_INTEGRITY_FAILED', 'error' => 'The approved payroll ruleset hash is invalid.'];
+        return [
+            'success' => 0,
+            'error_code' => 'RULESET_INTEGRITY_FAILED',
+            'client_id' => $clientId,
+            'pay_date' => $payDate,
+            'error' => 'The approved payroll ruleset hash is invalid.',
+        ];
     }
     return [
         'success' => 1,
@@ -271,7 +288,7 @@ function requirePopulationExceptionClientScope($db, int $exceptionId): void
     auth_require_client_id((int)$clientId);
 }
 
-$directClientRequests = ['save-payroll-rule-set', 'smart-payroll-enrollment', 'set-smart-payroll-enrollment'];
+$directClientRequests = ['payroll-rule-sets', 'save-payroll-rule-set', 'smart-payroll-enrollment', 'set-smart-payroll-enrollment'];
 if (in_array($request, $directClientRequests, true)) {
     auth_require_client_id((int)($_GET['client_id'] ?? $_POST['client_id'] ?? 0));
 }
@@ -319,12 +336,25 @@ if ($request === 'upload-fuji-summary') {
 }
 
 switch ($request) {
+    case 'payroll-rule-sets':
+        $clientId = (int)($_GET['client_id'] ?? $_POST['client_id'] ?? 0);
+        $stmt = $pdoConn->prepare("
+            SELECT id, client_id, ruleset_key, ruleset_version, effective_from, effective_to,
+                   ruleset_status, approved_by, approved_at, rules_hash, created_at
+            FROM payroll_import_rule_sets
+            WHERE client_id = :client_id
+            ORDER BY effective_from DESC, id DESC
+        ");
+        $stmt->execute([':client_id' => $clientId]);
+        echo json_encode(['success' => 1, 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+        break;
     case 'save-payroll-rule-set':
         $clientId = (int)($_POST['client_id'] ?? 0);
         $key = trim((string)($_POST['ruleset_key'] ?? ''));
         $version = trim((string)($_POST['ruleset_version'] ?? ''));
         $effectiveFrom = trim((string)($_POST['effective_from'] ?? ''));
         $effectiveTo = trim((string)($_POST['effective_to'] ?? '')) ?: null;
+        $approvalReason = trim((string)($_POST['approval_reason'] ?? ''));
         $rules = json_decode((string)($_POST['rules_payload'] ?? ''), true);
         $dateValid = static function (?string $value): bool {
             if ($value === null) { return true; }
@@ -336,20 +366,69 @@ switch ($request) {
         if ($clientId <= 0 || $key === '' || $version === '' || !is_array($rules) || !$rules
             || !$dateValid($effectiveFrom) || !$dateValid($effectiveTo)
             || ($effectiveTo !== null && $effectiveTo < $effectiveFrom)) {
-            echo json_encode(['success' => 0, 'error' => 'A valid client, version, effective window, and non-empty rule manifest are required.']);
+            echo json_encode([
+                'success' => 0,
+                'error_code' => 'RULESET_INPUT_INVALID',
+                'error' => 'A valid client, version, effective window, and non-empty rule manifest are required.',
+            ]);
+            break;
+        }
+        if (mb_strlen($approvalReason) < 20) {
+            echo json_encode([
+                'success' => 0,
+                'error_code' => 'RULESET_EVIDENCE_REQUIRED',
+                'error' => 'Approval evidence must identify the reviewed policy source and validation performed.',
+            ]);
             break;
         }
         foreach ($rules as $rule) {
             if (!is_array($rule) || trim((string)($rule['rule_type'] ?? '')) === ''
                 || trim((string)($rule['rule_key'] ?? '')) === ''
                 || trim((string)($rule['rule_version'] ?? '')) === ''
-                || !array_key_exists('snapshot', $rule)) {
-                echo json_encode(['success' => 0, 'error' => 'Every rule needs type, key, version, and an immutable snapshot.']);
+                || !is_array($rule['snapshot'] ?? null)) {
+                echo json_encode([
+                    'success' => 0,
+                    'error_code' => 'RULESET_MANIFEST_INVALID',
+                    'error' => 'Every rule needs a type, key, version, and immutable snapshot object.',
+                ]);
                 break 2;
             }
         }
+        $rules[] = [
+            'rule_type' => 'governance',
+            'rule_key' => 'owner_approval_evidence',
+            'rule_version' => '1',
+            'effective_from' => $effectiveFrom,
+            'effective_to' => $effectiveTo,
+            'snapshot' => [
+                'approval_reason' => $approvalReason,
+                'approved_by' => $user,
+                'approved_at' => gmdate('c'),
+            ],
+        ];
         $payload = PayrollImportRunManager::canonicalJson($rules);
         try {
+            $overlap = $pdoConn->prepare("
+                SELECT COUNT(*)
+                FROM payroll_import_rule_sets
+                WHERE client_id = :client_id
+                  AND ruleset_status = 'approved'
+                  AND effective_from <= COALESCE(:effective_to_a, '9999-12-31')
+                  AND COALESCE(effective_to, '9999-12-31') >= :effective_from
+            ");
+            $overlap->execute([
+                ':client_id' => $clientId,
+                ':effective_to_a' => $effectiveTo,
+                ':effective_from' => $effectiveFrom,
+            ]);
+            if ((int)$overlap->fetchColumn() > 0) {
+                echo json_encode([
+                    'success' => 0,
+                    'error_code' => 'RULESET_EFFECTIVE_OVERLAP',
+                    'error' => 'An approved payroll ruleset already covers part of this effective-date window.',
+                ]);
+                break;
+            }
             $stmt = $pdoConn->prepare("\n                INSERT INTO payroll_import_rule_sets (
                     client_id, ruleset_key, ruleset_version, effective_from, effective_to,
                     rules_payload, rules_hash, ruleset_status, approved_by, approved_at
@@ -371,7 +450,11 @@ switch ($request) {
             echo json_encode(['success' => 1, 'ruleset_id' => (int)$pdoConn->lastInsertId(), 'rules_hash' => hash('sha256', $payload)]);
         } catch (Throwable $error) {
             error_log('Payroll ruleset save failed: ' . $error->getMessage());
-            echo json_encode(['success' => 0, 'error' => 'The ruleset version already exists or could not be saved.']);
+            echo json_encode([
+                'success' => 0,
+                'error_code' => 'RULESET_SAVE_FAILED',
+                'error' => 'The ruleset version already exists or could not be saved.',
+            ]);
         }
         break;
     case 'smart-payroll-enrollment':

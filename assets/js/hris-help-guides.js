@@ -389,7 +389,8 @@
                 'Smart Employee Alignment, the automated candidate workbench for selected owner approvals.',
                 'Employee Identity Exceptions, the manual correction queue with an in-page employee workspace and HR decision-packet export.',
                 'DTR and Payslip Population Review with owner notifications.',
-                'A guarded canonical snapshot action that stays disabled while blockers remain.'
+                'A guarded canonical snapshot action that stays disabled while blockers remain.',
+                'Actionable error panels that state what failed, explain the correction, and open the owning workflow without clearing the selected batch.'
             ],
             canDo: [
                 'Stage a supported source workbook without writing canonical payroll.',
@@ -433,6 +434,13 @@
                     'After saving, confirm the same batch is re-evaluated and the exception count changes.',
                     'Export the HR decision packet when multiple owner decisions are needed.',
                     'Open DTR and Payslip Population Review for payslip-only employees.'
+                ]),
+                action('Resolve a payroll ruleset blocker', [
+                    'Read the red error panel under Guarded payroll import run. It identifies the exact missing or conflicting control and shows an error reference.',
+                    'Select Configure payroll rules. The Payroll ruleset registry opens without leaving the workflow and carries the affected client and pay date into the form.',
+                    'Review the approved client policy package. Admin or Payroll enters its effective dates, version, complete immutable rule manifest, and approval evidence.',
+                    'Select Create approved version. The system blocks incomplete evidence, invalid manifests, duplicate versions, and overlapping effective dates.',
+                    'Close the drawer and select Create canonical snapshot again for the same staged batch.'
                 ])
             ],
             flow: [
@@ -451,7 +459,9 @@
                 'Safe means eligible for explicit owner approval; it does not mean the system silently maps employees.',
                 'Smart Employee Alignment proposes and approves matches; Employee Identity Exceptions corrects the remaining master-data or evidence blockers.',
                 'The employee drawer preserves the selected batch, search text, and exception filter while Employee Management saves the record.',
-                'A disabled Create canonical snapshot button means at least one required gate is still blocked.'
+                'A disabled Create canonical snapshot button means at least one required gate is still blocked.',
+                'Use the action in a red error panel instead of navigating manually. The destination retains the client, pay date, or batch context when available.',
+                'Never create a placeholder rule manifest just to clear a blocker. Use the authorized client policy and statutory sources.'
             ],
             faq: true
         },

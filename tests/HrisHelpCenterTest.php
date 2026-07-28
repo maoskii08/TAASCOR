@@ -75,7 +75,7 @@ foreach ($expectedGuides as $slug) {
 }
 
 $check(str_contains($customFooter, 'hris-help.css?v=20260727c'), 'global help styles load on authenticated pages');
-$check(str_contains($customFooter, 'hris-help-guides.js?v=20260728-owner-approval'), 'page-guide registry loads globally');
+$check(str_contains($customFooter, 'hris-help-guides.js?v=20260728-actionable-errors'), 'page-guide registry loads globally');
 $check(str_contains($customFooter, 'hris-help.js?v=20260727d'), 'question-mark launcher loads globally');
 $check(str_contains($helpScript, 'id="hrisHelpLauncher"'), 'global help launcher is injected');
 $check(str_contains($helpScript, 'aria-label="Open guide for '), 'help launcher has a page-specific accessible label');
@@ -112,6 +112,13 @@ $check(
         && str_contains($guides, 'Legacy direct upload and manual DTR Save are intentionally blocked')
         && str_contains($guides, 'Use the DTR Format Engine for every new or corrected payroll input'),
     'DTR guide routes new and corrected inputs away from unsafe legacy transactions'
+);
+$check(
+    str_contains($guides, 'Actionable error panels that state what failed')
+        && str_contains($guides, 'Resolve a payroll ruleset blocker')
+        && str_contains($guides, 'Configure payroll rules')
+        && str_contains($guides, 'Never create a placeholder rule manifest'),
+    'DTR guide explains actionable error routing and governed ruleset recovery'
 );
 $check(
     str_contains($guides, 'no more than 1,000 normalized rows and 1 MiB')
