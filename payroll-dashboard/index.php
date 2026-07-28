@@ -231,13 +231,13 @@ $accessDescription = htmlspecialchars((string)($_SESSION['taascor_access_descrip
 
                       <div class="payroll-approval-panel" id="approvalPanel">
                         <div>
-                          <span>Maker</span>
+                          <span>Created by</span>
                           <strong id="approvalMaker">—</strong>
                           <small id="approvalMakerAt">—</small>
                         </div>
                         <i class="bx bx-right-arrow-alt" aria-hidden="true"></i>
                         <div>
-                          <span>Checker</span>
+                          <span>Approved by</span>
                           <strong id="approvalChecker">—</strong>
                           <small id="approvalCheckerAt">—</small>
                         </div>

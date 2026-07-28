@@ -68,22 +68,22 @@ $safeFacts = [
     'validation_error_count' => 0,
     'employee_count' => 18,
     'verified_artifact_count' => 18,
-    'maker' => 'payroll_maker',
-    'checker' => 'payroll_checker',
+    'created_by' => 'payroll_owner',
+    'approved_by' => 'payroll_owner',
     'blocking_checks' => [
         ['code' => 'IDENTITY_RESOLUTION', 'status' => 'passed'],
         ['code' => 'PAYROLL_RECONCILIATION', 'status' => 'passed'],
     ],
 ];
 $gate = PayrollImportRunManager::evaluateReleaseEligibility($safeFacts);
-payroll_run_check($gate['eligible'] === true && $gate['blocker_count'] === 0, 'complete independent evidence opens the release gate');
+payroll_run_check($gate['eligible'] === true && $gate['blocker_count'] === 0, 'complete owner approval evidence opens the release gate');
 
-$makerConflict = $safeFacts;
-$makerConflict['checker'] = 'PAYROLL_MAKER';
-$gate = PayrollImportRunManager::evaluateReleaseEligibility($makerConflict);
+$differentApprover = $safeFacts;
+$differentApprover['approved_by'] = 'another.payroll.owner';
+$gate = PayrollImportRunManager::evaluateReleaseEligibility($differentApprover);
 payroll_run_check(
-    $gate['eligible'] === false && in_array('maker_checker_not_separated', $gate['blockers'], true),
-    'maker-checker conflict blocks release case-insensitively'
+    $gate['eligible'] === true && $gate['blocker_count'] === 0,
+    'owner approval also supports a different authorized approver'
 );
 
 $artifactGap = $safeFacts;

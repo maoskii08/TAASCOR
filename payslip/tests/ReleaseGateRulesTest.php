@@ -96,7 +96,7 @@ check(
         && ($ready['release_attempt'] ?? false) === true
         && ($ready['release_actor'] ?? '') === 'release.user'
         && ($ready['release_actor_verified'] ?? false) === true,
-    'fully approved smart run opens the actor-aware release gate for an independent release actor'
+    'fully approved smart run opens the actor-aware release gate'
 );
 
 $sameUser = $readyRun;
@@ -110,7 +110,11 @@ $blocked = payroll_release_gate_policy([
     'actor' => 'maker.user',
     'runs' => [$sameUser],
 ]);
-check(in_array('run:RUN-19:maker_checker_same_user', $blocked['blocking_reasons'], true), 'maker cannot approve and release the same run');
+check(
+    ($blocked['success'] ?? 0) === 1
+        && ($blocked['release_actor_verified'] ?? false) === true,
+    'the same authorized Payroll owner may create, approve, and release the run'
+);
 
 $checkerActor = payroll_release_gate_policy([
     'smart_run_schema_exists' => true,
@@ -122,12 +126,11 @@ $checkerActor = payroll_release_gate_policy([
     'runs' => [$readyRun],
 ]);
 check(
-    ($checkerActor['success'] ?? 1) === 0
-        && in_array('run:RUN-19:release_actor_is_checker', $checkerActor['blocking_reasons'], true)
+    ($checkerActor['success'] ?? 0) === 1
         && ($checkerActor['release_attempt'] ?? false) === true
         && ($checkerActor['release_actor'] ?? '') === 'CHECKER.USER'
-        && ($checkerActor['release_actor_verified'] ?? true) === false,
-    'the recorded checker cannot release the run in browser preflight or transaction recheck'
+        && ($checkerActor['release_actor_verified'] ?? false) === true,
+    'the recorded approver may also release the run'
 );
 
 $independentActor = payroll_release_gate_policy([
@@ -142,7 +145,7 @@ $independentActor = payroll_release_gate_policy([
 check(
     ($independentActor['success'] ?? 0) === 1
         && ($independentActor['release_actor_verified'] ?? false) === true,
-    'an authenticated actor independent from the recorded checker may release the approved run'
+    'another authenticated Payroll owner may release the approved run'
 );
 
 $missingActor = payroll_release_gate_policy([

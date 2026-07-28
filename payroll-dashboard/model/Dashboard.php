@@ -14,7 +14,7 @@ class Dashboard
         'PAYROLL_RECONCILIATION',
         'LEGACY_SCOPE_BINDING',
         'PAYSLIP_ARTIFACT_COVERAGE',
-        'MAKER_CHECKER_SEPARATION',
+        'OWNER_APPROVAL_EVIDENCE',
     ];
 
     /** @var PDO|null */
@@ -781,22 +781,13 @@ class Dashboard
             $add($blockers, 'VALIDATION_ERRORS', 'Canonical payroll validation errors remain open.', 'P0', (int)$run['validation_error_count'], '../dtr-format-engine/');
             $add($blockers, 'POPULATION_EXCEPTIONS', 'DTR and expected payslip populations do not reconcile.', 'P0', $populationExceptions, '../dtr-format-engine/#payroll-population-review');
 
-            $maker = trim((string)($run['maker_created_by'] ?? ''));
-            $checker = trim((string)($run['checker_approved_by'] ?? ''));
+            $approver = trim((string)($run['checker_approved_by'] ?? ''));
             $add(
                 $blockers,
-                'CHECKER_APPROVAL_MISSING',
-                'Independent checker approval is not recorded.',
+                'OWNER_APPROVAL_MISSING',
+                'Authorized Payroll or Admin owner approval is not recorded.',
                 'P0',
-                $checker === '' ? 1 : 0,
-                '../dtr-format-engine/'
-            );
-            $add(
-                $blockers,
-                'MAKER_CHECKER_NOT_INDEPENDENT',
-                'The payroll maker and checker must be different users.',
-                'P0',
-                $maker !== '' && $checker !== '' && strcasecmp($maker, $checker) === 0 ? 1 : 0,
+                $approver === '' ? 1 : 0,
                 '../dtr-format-engine/'
             );
 
@@ -862,7 +853,7 @@ class Dashboard
                 'LEGACY_RELEASE_EVIDENCE_UNAVAILABLE',
                 $lock === null
                     ? 'Legacy payroll is not posted and has no run-level approval evidence.'
-                    : 'Legacy posting has no run-level maker/checker or sealed-artifact evidence.',
+                    : 'Legacy posting has no run-level owner-approval or sealed-artifact evidence.',
                 'P0',
                 1,
                 '../dtr-format-engine/'
@@ -916,26 +907,21 @@ class Dashboard
                 'checker_at' => null,
                 'message' => $mode === 'empty'
                     ? 'No payroll scope is available.'
-                    : 'Legacy data does not carry run-level maker/checker evidence.',
+                    : 'Legacy data does not carry run-level owner-approval evidence.',
             ];
         }
 
         $maker = trim((string)($run['maker_created_by'] ?? ''));
         $checker = trim((string)($run['checker_approved_by'] ?? ''));
-        $independent = $maker !== ''
-            && $checker !== ''
-            && strcasecmp($maker, $checker) !== 0;
         return [
-            'state' => $checker === '' ? 'pending' : ($independent ? 'approved' : 'invalid'),
+            'state' => $checker === '' ? 'pending' : 'approved',
             'maker' => $maker !== '' ? $maker : null,
             'checker' => $checker !== '' ? $checker : null,
             'maker_at' => $run['maker_created_at'],
             'checker_at' => $run['checker_approved_at'],
             'message' => $checker === ''
-                ? 'Independent checker approval is not yet recorded.'
-                : ($independent
-                    ? 'An independent checker is recorded for this run.'
-                    : 'The recorded checker is the payroll maker; approval is invalid.'),
+                ? 'Authorized owner approval is not yet recorded.'
+                : 'Owner approval recorded by an authorized Payroll or Admin user.',
         ];
     }
 

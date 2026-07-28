@@ -749,12 +749,12 @@ function payrollReleaseGateMessage(gate) {
         authoritative_run_selection_required: 'Select an approved, sealed payroll run.',
         authoritative_smart_run_missing: 'The selected authoritative payroll run is unavailable.',
         release_actor_missing: 'The authenticated release actor could not be verified.',
-        release_actor_is_checker: 'The run checker cannot also release payroll. Use an independent authorized release actor.',
+        owner_approval_missing: 'Record an authorized Payroll or Admin approval before releasing payroll.',
         smart_run_gate_check_failed: 'The release controls could not be verified.'
     };
     let blockers = Array.isArray(gate.blocking_reasons) ? gate.blocking_reasons : [];
     if (!blockers.length) {
-        return gate.error || 'Identity, calculation, reconciliation, payslip, and maker-checker controls must pass.';
+        return gate.error || 'Identity, calculation, reconciliation, payslip, and owner approval controls must pass.';
     }
     return blockers.map(function (reason) {
         if (labels[reason]) {

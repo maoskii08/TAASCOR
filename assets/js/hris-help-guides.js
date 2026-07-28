@@ -207,7 +207,7 @@
             whatsHere: [
                 'Client and pay-date filters that never mix different payroll cycles.',
                 'Employee, gross-income, net-pay, and employee-deduction totals read from Payroll Summary.',
-                'Governed-run, maker/checker, release, and posting-lock status when that evidence exists.',
+                'Governed-run, owner approval, release, and posting-lock status when that evidence exists.',
                 'DTR and payroll-result population counts, source lineage, and evidence-contract availability.',
                 'Release-readiness blockers with links to the owning workflow or data-quality page.',
                 'A deduction and payroll-component breakdown for the selected scope.'
@@ -248,7 +248,7 @@
             ],
             tips: [
                 'The dashboard does not invent accuracy, compliance, or performance scores.',
-                'Legacy payroll results are clearly marked unverified because they do not carry run-level maker/checker evidence.',
+                'Legacy payroll results are clearly marked unverified because they do not carry run-level owner-approval evidence.',
                 'A governed run must be bound to the same verified financial snapshot; missing or mismatched binding blocks release.',
                 'Dashboard review is read-only and is never a payroll approval by itself.'
             ],
@@ -384,7 +384,7 @@
             summary: 'Stage inconsistent DTR files, align employees to HRIS, review exceptions, and create a guarded payroll snapshot only after every release condition passes.',
             whatsHere: [
                 'A multi-client Real DTR Upload using approved, versioned format adapters.',
-                'A governed format registry with client binding, employee-ID policy, and maker-checker approval.',
+                'A governed format registry with client binding, employee-ID policy, and audited owner approval.',
                 'A compact Manage DTR templates button that opens the template library and editor in a drawer.',
                 'Smart Employee Alignment, the automated candidate workbench for selected owner approvals.',
                 'Employee Identity Exceptions, the manual correction queue with an in-page employee workspace and HR decision-packet export.',
@@ -408,13 +408,13 @@
                     'Select Analyze batch and review the approved, safe, review, and blocked counts.'
                 ]),
                 action('Onboard a new client DTR format', [
-                    'Select Manage DTR templates under Governed DTR Format Registry. HR and Payroll see View DTR templates because template changes are Admin controlled.',
+                    'Select Manage DTR templates under Governed DTR Format Registry. Payroll and Admin can configure templates; HR retains read-only visibility.',
                     'Review the library, then select New template or Edit and complete the client, site, source, expected header, and column-mapping details.',
                     'Select Save template and confirm the template appears in the drawer list. Closing the drawer returns to the unchanged payroll workflow.',
                     'Under Governed DTR Format Registry, select the template and create an immutable adapter version.',
                     'Choose Multi-sheet period summary when one historical workbook contains separate payroll-period tabs with employee-level attendance totals.',
                     'Choose Approved mapping required for vendor identifiers. Use Trusted HRIS identifier only when the source contains governed HRIS IDs.',
-                    'A different Admin reviews the sample, mapping, row reconciliation, and identity policy, records the evidence, and approves the draft.',
+                    'The authorized Payroll or Admin owner reviews the sample, mapping, row reconciliation, and identity policy, records the evidence, and approves the draft.',
                     'Confirm the approved version appears under Real DTR Upload only for the assigned client and effective dates.'
                 ]),
                 action('Approve selected employee mappings', [
@@ -445,7 +445,7 @@
             ],
             tips: [
                 'Fuji is one specialized adapter behind the same registry; it does not define the workflow for other clients.',
-                'Unknown formats remain blocked until a versioned adapter is created, tested, and independently approved.',
+                'Unknown formats remain blocked until a versioned adapter is created, tested, and approved with recorded owner evidence.',
                 'The template drawer separates occasional format administration from day-to-day upload and reconciliation work.',
                 'Synthetic and real-sample engineering previews are local diagnostics. Production uses the governed template registry, approved adapters, and staged upload controls.',
                 'Safe means eligible for explicit owner approval; it does not mean the system silently maps employees.',
@@ -636,7 +636,7 @@
                 'Load employee and aggregate payroll results for one scope.',
                 'Preview payslips while a governed run is still under review.',
                 'Generate or open sealed payslips after approval.',
-                'Post one exact run after reconciliation, artifact verification, and maker/checker approval.'
+                'Post one exact run after reconciliation, artifact verification, and recorded owner approval.'
             ],
             actions: [
                 action('Generate payroll', [
@@ -654,8 +654,8 @@
                 ]),
                 action('Post payroll', [
                     'Confirm the status names one authoritative run and shows the release gate as ready.',
-                    'Verify identity, ruleset, calculation, reconciliation, population, maker/checker, and sealed-artifact checks passed.',
-                    'Confirm the maker and checker are different users, and the authenticated posting user is not the recorded checker.',
+                    'Verify identity, ruleset, calculation, reconciliation, population, owner approval, and sealed-artifact checks passed.',
+                    'Confirm the approval and posting actors are authenticated and their actions are recorded in the audit trail.',
                     'Select Post Payroll only once.',
                     'Verify the posted lock, released run, published artifacts, outbox event, and audit evidence.',
                     'Treat corrections after posting as a controlled adjustment or reversal.'

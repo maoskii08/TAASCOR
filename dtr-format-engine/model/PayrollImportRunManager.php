@@ -46,7 +46,7 @@ class PayrollImportRunManager
         ['PAYROLL_RECONCILIATION', 'reconciliation', 1],
         ['LEGACY_SCOPE_BINDING', 'reconciliation', 1],
         ['PAYSLIP_ARTIFACT_COVERAGE', 'payslip', 1],
-        ['MAKER_CHECKER_SEPARATION', 'approval', 1],
+        ['OWNER_APPROVAL_EVIDENCE', 'approval', 1],
     ];
 
     /**
@@ -62,7 +62,7 @@ class PayrollImportRunManager
     {
         $maker = trim($maker);
         if ($batchId <= 0 || $maker === '') {
-            return $this->failure('INVALID_REQUEST', 'A staged batch and maker are required.');
+            return $this->failure('INVALID_REQUEST', 'A staged batch and authenticated Payroll owner are required.');
         }
 
         try {
@@ -630,9 +630,9 @@ class PayrollImportRunManager
         }
     }
 
-    public function approveRun(int $runId, string $checker): array
+    public function approveRun(int $runId, string $approver): array
     {
-        $checker = trim($checker);
+        $approver = trim($approver);
         try {
             $this->assertDatabase();
             $this->db->beginTransaction();
@@ -641,26 +641,36 @@ class PayrollImportRunManager
                 $this->db->rollBack();
                 return $this->failure('INVALID_STATE', 'Only a ready run can be approved.');
             }
-            if ($checker === '' || strcasecmp($checker, (string)$run['maker_created_by']) === 0) {
+            if ($approver === '') {
                 $this->db->rollBack();
-                return $this->failure('MAKER_CHECKER_CONFLICT', 'The checker must be different from the run maker.');
+                return $this->failure('APPROVER_REQUIRED', 'An authenticated Payroll or Admin approver is required.');
             }
             $gate = self::evaluateGate($this->loadGateFacts($run, 'approval'), 'approval');
             if (!$gate['eligible']) {
                 $this->db->rollBack();
                 return $this->failure('APPROVAL_GATE_BLOCKED', 'The run has unresolved approval blockers.', $gate);
             }
-            $stmt = $this->db->prepare("\n                UPDATE payroll_import_runs\n                SET status = 'approved', checker_approved_by = :checker,\n                    checker_approved_at = NOW(), lock_version = lock_version + 1\n                WHERE id = :id AND status = 'ready_for_approval'\n            ");
-            $stmt->execute([':checker' => $checker, ':id' => $runId]);
+            $stmt = $this->db->prepare("\n                UPDATE payroll_import_runs\n                SET status = 'approved', checker_approved_by = :approver,\n                    checker_approved_at = NOW(), lock_version = lock_version + 1\n                WHERE id = :id AND status = 'ready_for_approval'\n            ");
+            $stmt->execute([':approver' => $approver, ':id' => $runId]);
             if ($stmt->rowCount() !== 1) {
                 throw new RuntimeException('Concurrent approval state change detected.');
             }
-            $this->recordReleaseCheckInternal($runId, 'MAKER_CHECKER_SEPARATION', 'approval', true, 'passed', 'Maker and checker are distinct.', [
-                'maker' => (string)$run['maker_created_by'],
-                'checker' => $checker,
-            ], $checker);
+            $this->recordReleaseCheckInternal(
+                $runId,
+                'OWNER_APPROVAL_EVIDENCE',
+                'approval',
+                true,
+                'passed',
+                'Authorized payroll owner approval is recorded.',
+                [
+                    'created_by' => (string)$run['maker_created_by'],
+                    'approved_by' => $approver,
+                    'single_owner_approval' => strcasecmp($approver, (string)$run['maker_created_by']) === 0,
+                ],
+                $approver
+            );
             $this->refreshReleaseBlockers($runId);
-            $this->enqueueEvent($runId, 'PAYROLL_IMPORT_RUN_APPROVED', ['checker' => $checker]);
+            $this->enqueueEvent($runId, 'PAYROLL_IMPORT_RUN_APPROVED', ['approver' => $approver]);
             $updated = $this->loadRun($runId, false);
             $this->db->commit();
             $this->audit('Payroll import run approved: ' . (string)$run['run_uid']);
@@ -1019,10 +1029,10 @@ class PayrollImportRunManager
             if (!in_array((string)($facts['run_status'] ?? ''), ['approved', 'released'], true)) {
                 $blockers[] = 'run_not_approved';
             }
-            $maker = trim((string)($facts['maker'] ?? ''));
-            $checker = trim((string)($facts['checker'] ?? ''));
-            if ($maker === '' || $checker === '' || strcasecmp($maker, $checker) === 0) {
-                $blockers[] = 'maker_checker_not_separated';
+            $createdBy = trim((string)($facts['created_by'] ?? ''));
+            $approvedBy = trim((string)($facts['approved_by'] ?? ''));
+            if ($createdBy === '' || $approvedBy === '') {
+                $blockers[] = 'owner_approval_missing';
             }
             if ((int)($facts['verified_artifact_count'] ?? 0) < (int)($facts['employee_count'] ?? 0)
                 || (int)($facts['employee_count'] ?? 0) <= 0) {
@@ -1615,7 +1625,7 @@ class PayrollImportRunManager
     {
         $checks = $this->releaseChecks((int)$run['id']);
         $excluded = $phase === 'approval'
-            ? ['PAYSLIP_ARTIFACT_COVERAGE', 'MAKER_CHECKER_SEPARATION']
+            ? ['PAYSLIP_ARTIFACT_COVERAGE', 'OWNER_APPROVAL_EVIDENCE']
             : [];
         $blocking = [];
         foreach ($checks as $check) {
@@ -1638,8 +1648,8 @@ class PayrollImportRunManager
             'validation_error_count' => (int)$run['validation_error_count'],
             'employee_count' => (int)$run['employee_count'],
             'verified_artifact_count' => (int)$coverage['verified_artifact_count'],
-            'maker' => (string)$run['maker_created_by'],
-            'checker' => (string)($run['checker_approved_by'] ?? ''),
+            'created_by' => (string)$run['maker_created_by'],
+            'approved_by' => (string)($run['checker_approved_by'] ?? ''),
             'blocking_checks' => $blocking,
         ];
     }

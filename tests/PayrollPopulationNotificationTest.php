@@ -22,7 +22,7 @@ $checks = [
     [substr_count($controller, 'syncPopulationNotification(') >= 3, 'import, resolution, and explicit sync update notification state'],
     [str_contains($page, 'id="notifyPopulationOwnersBtn"'), 'review queue exposes an owner-notification action'],
     [str_contains($script, 'syncPayrollPopulationNotification'), 'owner-notification action calls the protected endpoint'],
-    [str_contains($page, 'index-01.js?v=20260728c'), 'updated workflow script is cache-busted'],
+    [str_contains($page, 'index-01.js?v=20260728d'), 'updated workflow script is cache-busted'],
     [
         str_contains($page, 'TAASCOR_ENABLE_LOCAL_PREVIEWS')
             && str_contains($page, 'data-enable-local-previews')

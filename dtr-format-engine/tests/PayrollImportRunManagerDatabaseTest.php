@@ -360,16 +360,10 @@ try {
         ($ready['success'] ?? 0) === 1 && $ready['run']['status'] === 'ready_for_approval',
         'all pre-approval controls move the run to ready'
     );
-    $makerApproval = $manager->approveRun($runId, 'PAYROLL_MAKER');
-    payroll_database_check(
-        ($makerApproval['success'] ?? 1) === 0
-        && ($makerApproval['error_code'] ?? '') === 'MAKER_CHECKER_CONFLICT',
-        'maker cannot approve their own run'
-    );
-    $approved = $manager->approveRun($runId, 'payroll_checker');
+    $approved = $manager->approveRun($runId, 'PAYROLL_MAKER');
     payroll_database_check(
         ($approved['success'] ?? 0) === 1 && $approved['run']['status'] === 'approved',
-        'independent checker can approve a fully controlled run'
+        'the same Payroll owner can approve a fully controlled run'
     );
 
     $artifactContents = "%PDF-1.4\nprivate-payslip-fixture\n%%EOF\n";
@@ -390,7 +384,7 @@ try {
         'storage_path' => $artifactStoragePath,
         'content_hash' => hash('sha256', 'different-contents'),
         'artifact_status' => 'verified',
-    ], 'payroll_checker');
+    ], 'payroll_maker');
     payroll_database_check(
         ($forged['success'] ?? 1) === 0 && ($forged['error_code'] ?? '') === 'ARTIFACT_INTEGRITY_FAILED',
         'artifact registration rejects a forged content hash'
@@ -401,7 +395,7 @@ try {
         'content_hash' => $contentHash,
         'artifact_status' => 'generated',
         'byte_size' => 2048,
-    ], 'payroll_checker');
+    ], 'payroll_maker');
     payroll_database_check(
         ($generated['success'] ?? 0) === 1 && ($generated['coverage']['complete'] ?? true) === false,
         'generated but unverified payslip does not satisfy release coverage'
@@ -424,7 +418,7 @@ try {
         'content_hash' => $contentHash,
         'artifact_status' => 'verified',
         'byte_size' => 2048,
-    ], 'payroll_checker');
+    ], 'payroll_maker');
     payroll_database_check(
         ($verified['success'] ?? 0) === 1 && ($verified['coverage']['complete'] ?? false) === true,
         'verified payslip completes employee artifact coverage'
@@ -435,7 +429,7 @@ try {
         && $released['run']['status'] === 'approved'
         && $released['run']['release_status'] === 'ready'
         && ($released['gate']['eligible'] ?? false) === true,
-        'approved fully evidenced run is ready for atomic payroll posting'
+        'one Payroll owner can complete approval and artifact evidence for atomic payroll posting'
     );
     $outboxCount = (int)$db->query("SELECT COUNT(*) FROM payroll_import_outbox WHERE aggregate_id = {$runId}")->fetchColumn();
     payroll_database_check($outboxCount >= 6, 'run lifecycle produces transactional outbox events');

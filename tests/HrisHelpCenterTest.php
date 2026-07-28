@@ -75,7 +75,7 @@ foreach ($expectedGuides as $slug) {
 }
 
 $check(str_contains($customFooter, 'hris-help.css?v=20260727c'), 'global help styles load on authenticated pages');
-$check(str_contains($customFooter, 'hris-help-guides.js?v=20260727k'), 'page-guide registry loads globally');
+$check(str_contains($customFooter, 'hris-help-guides.js?v=20260728-owner-approval'), 'page-guide registry loads globally');
 $check(str_contains($customFooter, 'hris-help.js?v=20260727d'), 'question-mark launcher loads globally');
 $check(str_contains($helpScript, 'id="hrisHelpLauncher"'), 'global help launcher is injected');
 $check(str_contains($helpScript, 'aria-label="Open guide for '), 'help launcher has a page-specific accessible label');

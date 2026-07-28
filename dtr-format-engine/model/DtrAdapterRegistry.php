@@ -184,7 +184,7 @@ class DtrAdapterRegistry
                 'profile_uid' => $profileUid,
                 'profile_status' => 'draft',
                 'configuration_hash' => $hash,
-                'message' => 'Draft adapter created. A different Admin must approve it before real uploads.',
+                'message' => 'Draft adapter created. An authorized Payroll or Admin owner may approve it after recording test evidence.',
             ];
         } catch (Throwable $error) {
             if ($this->db->inTransaction()) {
@@ -214,10 +214,6 @@ class DtrAdapterRegistry
             if ((string)$profile['profile_status'] !== 'draft') {
                 $this->db->rollBack();
                 return ['success' => 0, 'error' => 'Only a draft adapter can be approved.'];
-            }
-            if (strcasecmp(trim((string)$profile['created_by']), trim($user)) === 0) {
-                $this->db->rollBack();
-                return ['success' => 0, 'error' => 'Maker-checker control requires a different Admin to approve this adapter.'];
             }
             $payload = (string)$profile['configuration_payload'];
             if (!hash_equals((string)$profile['configuration_hash'], hash('sha256', $payload))) {
@@ -271,6 +267,9 @@ class DtrAdapterRegistry
                 $reason,
                 [
                     'configuration_hash' => (string)$profile['configuration_hash'],
+                    'created_by' => (string)$profile['created_by'],
+                    'approved_by' => $user,
+                    'single_owner_approval' => strcasecmp(trim((string)$profile['created_by']), trim($user)) === 0,
                     'effective_from' => (string)$profile['effective_from'],
                     'effective_to' => $profile['effective_to'],
                     'identity_policy' => (string)$profile['identity_policy'],

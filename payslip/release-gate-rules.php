@@ -96,18 +96,14 @@ function payroll_release_gate_policy(array $context): array
             $blocking[] = $prefix . 'sealed_payslip_file_verification_failed';
         }
 
-        $maker = trim((string)($run['maker_created_by'] ?? ''));
-        $checker = trim((string)($run['checker_approved_by'] ?? ''));
-        if ($maker === '' || $checker === '') {
-            $blocking[] = $prefix . 'maker_checker_missing';
-        } elseif (strcasecmp($maker, $checker) === 0) {
-            $blocking[] = $prefix . 'maker_checker_same_user';
+        $createdBy = trim((string)($run['maker_created_by'] ?? ''));
+        $approvedBy = trim((string)($run['checker_approved_by'] ?? ''));
+        if ($createdBy === '' || $approvedBy === '') {
+            $blocking[] = $prefix . 'owner_approval_missing';
         }
         if ($releaseAttempt) {
             if ($actor === '') {
                 $blocking[] = $prefix . 'release_actor_missing';
-            } elseif ($checker !== '' && strcasecmp($actor, $checker) === 0) {
-                $blocking[] = $prefix . 'release_actor_is_checker';
             } else {
                 $releaseActorVerified = true;
             }
@@ -148,7 +144,7 @@ function payroll_release_gate_blocked(array $reasons, array $context = []): arra
         'gate_status' => 'blocked',
         'mode' => 'smart_run',
         'code' => 'payroll_release_gate_blocked',
-        'error' => 'Payroll cannot be posted until identity, calculation, reconciliation, payslip, and maker-checker controls pass.',
+        'error' => 'Payroll cannot be posted until identity, calculation, reconciliation, payslip, and owner approval controls pass.',
         'blocking_reasons' => array_values(array_unique($reasons)),
     ];
 

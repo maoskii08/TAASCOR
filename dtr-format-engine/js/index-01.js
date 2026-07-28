@@ -1798,7 +1798,7 @@ function renderPayrollImportRun(run, gate) {
         .removeClass('alert-danger alert-warning alert-success')
         .addClass(gate.eligible ? 'alert-success' : 'alert-warning')
         .text(gate.eligible
-            ? 'Every configured release control has passed. Final posting remains maker-checker controlled.'
+            ? 'Every configured release control has passed. An authorized Payroll or Admin owner may complete final posting.'
             : 'Immutable run snapshot created. Release remains blocked by: ' + (blockers || 'pending controls') + '.');
 }
 
@@ -2550,13 +2550,13 @@ function applyDtrEngineRoleCapabilities() {
     var canApproveIdentities = String($('body').data('can-approve-identities')) === '1';
     if (!canApproveIdentities) {
         $('#smartCohortApprovalReason').prop('disabled', true)
-            .attr('placeholder', 'Admin or HR owner approval is required');
+            .attr('placeholder', 'Admin, HR, or Payroll owner approval is required');
         $('#approveSmartCohortBtn').prop('disabled', true);
     }
     if (!canConfigure) {
         $('#templateForm :input, #newTemplateBtn, #addMappingBtn, #clearSyntheticBtn, #runRealSampleAdaptersBtn, #clearRealSampleAdaptersBtn, #adapterApprovalForm :input, #adapterProfileForm :input, #adapterApprovalProfileId, #adapterApprovalReason, #approveAdapterProfileBtn')
             .prop('disabled', true);
-        $('#saveTemplateBtn').text('Admin configuration only');
+        $('#saveTemplateBtn').text('Admin or Payroll configuration only');
     }
 }
 

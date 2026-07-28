@@ -619,7 +619,7 @@ class Payslip
                                 'IDENTITY_RESOLUTION', 'CANONICAL_ROW_INTEGRITY',
                                 'RULE_VERSION_LOCK', 'PAYROLL_CALCULATION',
                                 'PAYROLL_RECONCILIATION', 'LEGACY_SCOPE_BINDING',
-                                'PAYSLIP_ARTIFACT_COVERAGE', 'MAKER_CHECKER_SEPARATION'
+                                'PAYSLIP_ARTIFACT_COVERAGE', 'OWNER_APPROVAL_EVIDENCE'
                               )
                         ) AS mandatory_check_count,
                         (
@@ -631,7 +631,7 @@ class Payslip
                                 'IDENTITY_RESOLUTION', 'CANONICAL_ROW_INTEGRITY',
                                 'RULE_VERSION_LOCK', 'PAYROLL_CALCULATION',
                                 'PAYROLL_RECONCILIATION', 'LEGACY_SCOPE_BINDING',
-                                'PAYSLIP_ARTIFACT_COVERAGE', 'MAKER_CHECKER_SEPARATION'
+                                'PAYSLIP_ARTIFACT_COVERAGE', 'OWNER_APPROVAL_EVIDENCE'
                               )
                         ) AS passed_mandatory_check_count,
                         (

@@ -71,31 +71,42 @@ if (in_array($request, $mutatingRequests, true) && ($_SERVER['REQUEST_METHOD'] ?
     exit;
 }
 
-$adminOnlyRequests = [
+$payrollConfigurationRequests = [
     'save-template',
     'deactivate-template',
-    'clear-synthetic-batches',
-    'run-real-sample-adapters',
-    'clear-real-sample-adapters',
-    'save-adapter-approval',
     'create-adapter-profile',
     'approve-adapter-profile',
     'set-smart-payroll-enrollment',
     'save-payroll-rule-set',
 ];
+if (in_array($request, $payrollConfigurationRequests, true) && !in_array(auth_level(), [1, 3], true)) {
+    http_response_code(403);
+    echo json_encode([
+        'success' => 0,
+        'error' => 'Admin or Payroll ownership is required for payroll template, adapter, and ruleset configuration.',
+    ]);
+    exit;
+}
+
+$adminOnlyRequests = [
+    'clear-synthetic-batches',
+    'run-real-sample-adapters',
+    'clear-real-sample-adapters',
+    'save-adapter-approval',
+];
 if (in_array($request, $adminOnlyRequests, true) && auth_level() !== 1) {
     http_response_code(403);
     echo json_encode([
         'success' => 0,
-        'error' => 'Administrator approval is required for template and adapter configuration changes.',
+        'error' => 'Administrator access is required for local engineering diagnostics.',
     ]);
     exit;
 }
 
 $identityOwnerRequests = ['approve-smart-employee-cohort', 'resolve-employee-exception'];
-if (in_array($request, $identityOwnerRequests, true) && !in_array(auth_level(), [1, 2], true)) {
+if (in_array($request, $identityOwnerRequests, true) && !in_array(auth_level(), [1, 2, 3], true)) {
     http_response_code(403);
-    echo json_encode(['success' => 0, 'error' => 'Admin or HR identity-owner approval is required.']);
+    echo json_encode(['success' => 0, 'error' => 'Admin, HR, or Payroll identity-owner approval is required.']);
     exit;
 }
 

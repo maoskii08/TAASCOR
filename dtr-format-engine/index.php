@@ -1,7 +1,7 @@
 <?php
 require_once('../includes/auth_guard.php');
 auth_require_role([1, 2, 3]);
-$canConfigureTemplates = auth_level() === 1;
+$canConfigureTemplates = in_array(auth_level(), [1, 3], true);
 $hostName = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
 $hostName = explode(':', $hostName, 2)[0];
 $localPreviewOverride = getenv('TAASCOR_ENABLE_LOCAL_PREVIEWS');
@@ -34,7 +34,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
 
 <body
   data-can-configure-templates="<?php echo $canConfigureTemplates ? '1' : '0'; ?>"
-  data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2], true) ? '1' : '0'; ?>"
+  data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2, 3], true) ? '1' : '0'; ?>"
   data-enable-local-previews="<?php echo $enableLocalPreviewDiagnostics ? '1' : '0'; ?>">
   <div class="layout-wrapper layout-content-navbar">
     <div class="layout-container">
@@ -210,7 +210,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
               <div class="card-header d-flex flex-wrap gap-2 align-items-center justify-content-between">
                 <div>
                   <h5 class="mb-1">Governed DTR Format Registry</h5>
-                  <small class="text-muted">Create immutable adapter versions from client templates. Maker-checker approval is required before a format becomes available for real uploads.</small>
+                  <small class="text-muted">Create immutable adapter versions from client templates. An authorized Payroll or Admin owner must record approval evidence before a format becomes available for real uploads.</small>
                 </div>
                 <div class="d-flex flex-wrap align-items-center gap-2">
                   <button type="button" class="btn btn-sm btn-outline-primary" id="openDtrTemplateDrawerBtn"
@@ -219,7 +219,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
                     <i class="bx bx-table me-1"></i>
                     <?php echo $canConfigureTemplates ? 'Manage' : 'View'; ?> DTR templates
                   </button>
-                  <span class="badge bg-label-primary">Admin controlled</span>
+                  <span class="badge bg-label-primary">Admin and Payroll controlled</span>
                 </div>
               </div>
               <div class="card-body">
@@ -273,7 +273,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
 
                 <div class="row g-3 align-items-end mb-4">
                   <div class="col-lg-4">
-                    <label class="form-label" for="adapterApprovalProfileId">Draft awaiting checker</label>
+                    <label class="form-label" for="adapterApprovalProfileId">Draft awaiting owner approval</label>
                     <select class="form-select" id="adapterApprovalProfileId">
                       <option value="">Select draft</option>
                     </select>
@@ -1294,7 +1294,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
   </div>
 
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js?v=20260728c"></script>
+  <script src="js/index-01.js?v=20260728d"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 

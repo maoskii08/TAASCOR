@@ -272,7 +272,7 @@ auth_require_role([1, 3]);
     <!-- / Layout wrapper -->
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-09.js?v=20260727-phase0"></script>
+    <script src="js/index-09.js?v=20260728-owner-approval"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>

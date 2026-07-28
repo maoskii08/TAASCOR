@@ -125,7 +125,7 @@ containment_check(
         && str_contains($payslipJavascript, 'gate.release_attempt === true')
         && str_contains($payslipJavascript, 'gate.release_actor_verified === true')
         && str_contains($payslipJavascript, "String(gate.release_actor || '').trim() !== ''"),
-    'browser preflight carries the authenticated actor and fails closed without verified release-actor separation'
+    'browser preflight carries the authenticated actor and fails closed when the actor cannot be verified'
 );
 containment_check(
     !str_contains($payslipJavascript, '(!payrollReleaseGate || payrollReleaseGate.success == 1)'),

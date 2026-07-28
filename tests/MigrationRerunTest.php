@@ -224,20 +224,11 @@ try {
     $selfApproval = $registry->approveProfile(
         $profileId,
         'maker.admin',
-        'Maker attempted self approval.'
-    );
-    check(
-        ($selfApproval['success'] ?? 1) === 0,
-        'blocked adapter maker from approving the same version'
-    );
-    $approval = $registry->approveProfile(
-        $profileId,
-        'checker.admin',
         'Verified headers, client scope, identity policy, and row controls.'
     );
     check(
-        ($approval['success'] ?? 0) === 1,
-        'approved the adapter through a different checker'
+        ($selfApproval['success'] ?? 0) === 1,
+        'the same authorized owner approved the adapter with evidence'
     );
     $approved = $registry->approvedProfile($profileId, 101, 'xlsx', '2026-06-30');
     check(

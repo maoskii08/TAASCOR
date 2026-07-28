@@ -84,10 +84,10 @@ payroll_dashboard_check(
     'dashboard selects released or ready governed evidence before newer non-authoritative drafts'
 );
 payroll_dashboard_check(
-    str_contains($modelSource, "'CHECKER_APPROVAL_MISSING'")
-        && str_contains($modelSource, "'MAKER_CHECKER_NOT_INDEPENDENT'")
-        && str_contains($modelSource, "strcasecmp(\$maker, \$checker)"),
-    'dashboard release blockers enforce an independent maker-checker pair'
+    str_contains($modelSource, "'OWNER_APPROVAL_MISSING'")
+        && !str_contains($modelSource, "'MAKER_CHECKER_NOT_INDEPENDENT'")
+        && !str_contains($modelSource, "strcasecmp(\$maker, \$checker)"),
+    'dashboard requires approval evidence without enforcing a different approver'
 );
 payroll_dashboard_check(
     !preg_match('/\bINSERT\s+INTO\b|\bUPDATE\s+[a-z_`]|\bDELETE\s+FROM\b/i', $modelSource),
@@ -112,9 +112,9 @@ $sameActorApproval = $approvalStateMethod->invoke($dashboard, 'smart_run', [
     'checker_approved_at' => '2026-07-27 10:05:00',
 ]);
 payroll_dashboard_check(
-    ($sameActorApproval['state'] ?? '') === 'invalid'
-        && str_contains((string)($sameActorApproval['message'] ?? ''), 'approval is invalid'),
-    'dashboard does not describe a same-user maker-checker record as independent approval'
+    ($sameActorApproval['state'] ?? '') === 'approved'
+        && str_contains((string)($sameActorApproval['message'] ?? ''), 'Owner approval recorded'),
+    'dashboard recognizes same-owner payroll approval'
 );
 
 $readinessStateMethod = $dashboardReflection->getMethod('readinessState');

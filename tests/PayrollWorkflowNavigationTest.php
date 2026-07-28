@@ -72,6 +72,11 @@ $check(str_contains($dtrEnginePage, 'id="templatesTable"') && str_contains($dtrE
 $check(str_contains($dtrEngineScript, "$('#dtrTemplateDrawer').on('shown.bs.offcanvas'"), 'opening the template drawer refreshes the current library');
 $check(str_contains($dtrEngineScript, 'function focusTemplateEditor()'), 'template edit actions move users to the drawer editor');
 $check(str_contains($dtrTemplateController, '$clientId === null || (int)$clientId <= 0'), 'shared any-client templates remain viewable to global HRIS roles');
+$check(str_contains($dtrEnginePage, '$canConfigureTemplates = in_array(auth_level(), [1, 3], true);'), 'Payroll and Admin can configure governed DTR formats');
+$check(str_contains($dtrTemplateController, '$payrollConfigurationRequests') && str_contains($dtrTemplateController, '!in_array(auth_level(), [1, 3], true)'), 'server authorization permits Payroll and Admin configuration ownership');
+$check(str_contains($dtrEnginePage, 'data-can-approve-identities="<?php echo in_array(auth_level(), [1, 2, 3], true)'), 'Payroll can approve supported employee-identity matches in the page');
+$check(str_contains($dtrTemplateController, '$identityOwnerRequests') && str_contains($dtrTemplateController, '!in_array(auth_level(), [1, 2, 3], true)'), 'server authorization permits Payroll identity-owner decisions');
+$check(!str_contains($dtrEnginePage, 'Maker-checker approval') && !str_contains($dtrTemplateController, 'different Admin'), 'workflow no longer presents maker-checker separation as a payroll requirement');
 $check(str_contains($dtrEnginePage, 'employeeWorkspaceDrawer'), 'identity exceptions include an in-page employee workspace drawer');
 $check(str_contains($dtrEngineScript, "event.data.source !== 'taascor-employee-workspace'"), 'drawer saves trigger same-page identity refresh');
 $check(str_contains($employeePage, 'employee-workspace-embed'), 'Employee Management supports the embedded drawer workspace');
