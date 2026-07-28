@@ -1795,6 +1795,11 @@ class SyntheticUploadParser
                 $value = preg_replace('/\D+/', '', $value);
             } elseif ($rule === 'strip_commas') {
                 $value = str_replace(',', '', $value);
+            } elseif ($rule === 'hours_to_minutes') {
+                $numericHours = str_replace([',', ' '], '', $value);
+                if (is_numeric($numericHours)) {
+                    $value = (string)round((float)$numericHours * 60, 4);
+                }
             }
         }
         if (strtolower($dataType) === 'number') {

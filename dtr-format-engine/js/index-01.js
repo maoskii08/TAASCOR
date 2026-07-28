@@ -56,6 +56,12 @@ function bindDtrEngineEvents() {
     $('#addMappingBtn').on('click', function () {
         addMappingRow();
     });
+    $('#sourceType').on('change', function () {
+        if ($(this).val() === 'period_summary_workbook'
+            && Number($('#templateId').val() || 0) === 0) {
+            applyPeriodSummaryMappingPreset();
+        }
+    });
 
     $('#mappingTable').on('click', '.remove-mapping-row', function () {
         $(this).closest('tr').remove();
@@ -599,6 +605,37 @@ function resetTemplateForm() {
         data_type: 'text',
         is_required: 1,
         sort_order: 1
+    });
+}
+
+function applyPeriodSummaryMappingPreset() {
+    var fields = [
+        ['Source Row', 'source_row_number', 'number', '', 1],
+        ['Employee Name', 'employee_name', 'text', 'collapse_spaces', 1],
+        ['Days Worked', 'worked_days', 'number', '', 1],
+        ['Undertime Hours', 'undertime_minutes', 'number', 'hours_to_minutes', 0],
+        ['Overtime Hours', 'overtime_hours', 'number', '', 0],
+        ['Holiday Description', 'holiday_description', 'text', 'collapse_spaces', 0],
+        ['Holiday Hours', 'holiday_hours', 'number', '', 0],
+        ['Night Differential Overtime Hours', 'night_diff_ot_hours', 'number', '', 0],
+        ['Source Sheet', 'source_sheet', 'text', 'collapse_spaces', 1]
+    ];
+    $('#dateFormat').val('Y-m-d');
+    $('#timeFormat').val('summary');
+    $('#employeeIdentifierField').val('Employee Name');
+    $('#expectedHeaders').val(fields.map(function (field) {
+        return field[0];
+    }).join('\n'));
+    $('#mappingTable tbody').empty();
+    fields.forEach(function (field, index) {
+        addMappingRow({
+            source_header: field[0],
+            canonical_field: field[1],
+            data_type: field[2],
+            transform_rule: field[3],
+            is_required: field[4],
+            sort_order: index + 1
+        });
     });
 }
 
@@ -2465,6 +2502,7 @@ function addMappingRow(field) {
         + option('collapse_spaces', 'Collapse spaces', field.transform_rule || '')
         + option('digits_only', 'Digits only', field.transform_rule || '')
         + option('strip_commas', 'Strip commas', field.transform_rule || '')
+        + option('hours_to_minutes', 'Hours to minutes', field.transform_rule || '')
         + '</select></td>'
         + '<td class="text-center"><input type="checkbox" class="form-check-input mapping-required" ' + (Number(field.is_required) === 1 ? 'checked' : '') + ' /></td>'
         + '<td><button type="button" class="btn btn-sm btn-outline-secondary remove-mapping-row"><i class="bx bx-x"></i></button></td>'

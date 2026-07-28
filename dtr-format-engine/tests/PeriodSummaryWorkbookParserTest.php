@@ -58,4 +58,26 @@ period_summary_check(
     'registered the reusable multi-sheet period-summary parser'
 );
 
+$transformMethod = new ReflectionMethod(SyntheticUploadParser::class, 'applyFieldValue');
+$undertimeMinutes = $transformMethod->invoke($parser, '1.5', 'number', 'hours_to_minutes');
+period_summary_check(
+    abs((float)$undertimeMinutes - 90.0) < 0.0001,
+    'normalizes period-summary undertime hours to canonical minutes'
+);
+
+$templateManagerSource = file_get_contents(__DIR__ . '/../model/TemplateManager.php');
+$workflowScript = file_get_contents(__DIR__ . '/../js/index-01.js');
+period_summary_check(
+    str_contains($templateManagerSource, "'period_summary_workbook'")
+        && str_contains($templateManagerSource, "'holiday_hours'")
+        && str_contains($templateManagerSource, "'night_diff_ot_hours'"),
+    'exposes the reusable period-summary source type and canonical payroll fields'
+);
+period_summary_check(
+    str_contains($workflowScript, 'function applyPeriodSummaryMappingPreset()')
+        && str_contains($workflowScript, "'hours_to_minutes'")
+        && str_contains($workflowScript, "['Source Sheet', 'source_sheet'"),
+    'template administration applies the governed period-summary mapping preset'
+);
+
 echo "RESULT: Multi-sheet period-summary parsing is deterministic and client-agnostic.\n";

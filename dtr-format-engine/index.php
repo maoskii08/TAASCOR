@@ -124,7 +124,9 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
                 <div class="card">
                   <div class="card-body">
                     <span class="fw-medium d-block mb-1">Scope</span>
-                    <h5 class="card-title mb-0">Local Only</h5>
+                    <h5 class="card-title mb-0">
+                      <?php echo $enableLocalPreviewDiagnostics ? 'Local Diagnostics' : 'Governed Production'; ?>
+                    </h5>
                   </div>
                 </div>
               </div>
@@ -1292,7 +1294,7 @@ $enableLocalPreviewDiagnostics = $localPreviewOverride !== false
   </div>
 
   <?php require("../includes/footer.php"); ?>
-  <script src="js/index-01.js?v=20260728b"></script>
+  <script src="js/index-01.js?v=20260728c"></script>
   <?php require("../includes/custom-footer.php"); ?>
 </body>
 
