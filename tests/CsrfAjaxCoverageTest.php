@@ -23,4 +23,12 @@ foreach (['../assets/js/hris-global.js', '../hris/assets/js/hris-global.js'] as 
     }
 }
 
+foreach (['../includes/custom-footer.php', '../hris/includes/custom-footer.php'] as $footer) {
+    $contents = (string)file_get_contents(__DIR__ . '/' . $footer);
+    csrf_check(
+        preg_match('#hris-global\.js\?v=[A-Za-z0-9._-]+#', $contents) === 1,
+        basename(dirname($footer)) . ' cache-busts the shared CSRF handler'
+    );
+}
+
 echo "RESULT: Global AJAX CSRF coverage passed.\n";
