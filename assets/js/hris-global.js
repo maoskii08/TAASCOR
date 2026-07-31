@@ -6,6 +6,42 @@
 (function ($) {
     'use strict';
 
+    // Maintenance module scripts disable and relabel their save controls before
+    // sending AJAX. Associate that state with the exact request so every
+    // terminal outcome restores the original control without requiring a reload.
+    var maintenancePathPattern = /\/(?:branch-maintenance|client-maintenance|department-maintenance|position-maintenance|client-location-maintenance|payday)(?:\/|$)/i;
+    var $maintenanceSaveButtons = $();
+
+    if (maintenancePathPattern.test(window.location.pathname)) {
+        $maintenanceSaveButtons = $('#addBtn, #saveBtn');
+        $maintenanceSaveButtons.each(function () {
+            $(this).data('hris-idle-html', $(this).html());
+        });
+
+        $(document).ajaxSend(function (_event, xhr) {
+            $maintenanceSaveButtons.each(function () {
+                var $button = $(this);
+                if ($button.prop('disabled')
+                    && !$button.data('hris-save-xhr')
+                    && /^Saving(?:\.\.\.|\u2026)/i.test($button.text().trim())) {
+                    $button.data('hris-save-xhr', xhr);
+                }
+            });
+        });
+
+        $(document).ajaxComplete(function (_event, xhr) {
+            $maintenanceSaveButtons.each(function () {
+                var $button = $(this);
+                if ($button.data('hris-save-xhr') === xhr) {
+                    $button
+                        .html($button.data('hris-idle-html'))
+                        .prop('disabled', false)
+                        .removeData('hris-save-xhr');
+                }
+            });
+        });
+    }
+
     // ── CSRF: inject X-CSRF-Token header on every jQuery AJAX POST ────────
     $(document).ajaxSend(function (_event, xhr, settings) {
         var method = String(settings.type || settings.method || 'GET').toUpperCase();

@@ -8,4 +8,4 @@
 <script src="../assets/js/hris-help.js?v=20260727d"></script>
 <script src="../assets/js/data-issue-tracker.js?v=20260727a"></script>
 <script src="../assets/js/hris-actionable-errors.js?v=20260728b"></script>
-<script src="../assets/js/hris-global.js?v=20260731a"></script>
+<script src="../assets/js/hris-global.js?v=20260731b"></script>
