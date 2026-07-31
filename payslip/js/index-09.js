@@ -32,10 +32,86 @@ $( document ).ready(function() {
 
 $("#client").change(function() {
     let client_selected = $(this).val();
-    if(client_selected != null){
+    if(client_selected){
         getPayDay(client_selected);
     }    
 });
+
+function parsePayslipRequestError(xhr, fallbackMessage) {
+    let payload = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+    if (!payload && xhr && xhr.responseText) {
+        try {
+            payload = JSON.parse(xhr.responseText);
+        } catch (error) {
+            payload = null;
+        }
+    }
+
+    let status = Number(xhr && xhr.status ? xhr.status : 0);
+    let code = payload && (payload.error_code || payload.code)
+        ? String(payload.error_code || payload.code)
+        : (status === 401 ? 'ACCESS_REQUIRED' : (status === 403 ? 'REQUEST_REFRESH_REQUIRED' : 'CONNECTION_FAILED'));
+
+    return {
+        error_code: code,
+        error: payload && (payload.error || payload.message)
+            ? String(payload.error || payload.message)
+            : fallbackMessage
+    };
+}
+
+function clearPayslipClientLoadError() {
+    $('#payslipClientLoadState')
+        .hide()
+        .empty()
+        .removeAttr('data-hris-actionable data-hris-error-code');
+    $('#client').removeAttr('aria-invalid aria-describedby');
+}
+
+function focusPayslipClientFilter() {
+    let visibleSelection = $('#client').next('.select2').find('.select2-selection').get(0);
+    let target = visibleSelection || document.getElementById('client');
+    if (target && typeof target.focus === 'function') {
+        target.focus();
+    }
+}
+
+function showPayslipClientLoadError(input) {
+    let error = input && input.error
+        ? input
+        : {error_code: 'CONNECTION_FAILED', error: 'Unable to load the client list.'};
+    let $client = $('#client');
+    let host = document.getElementById('payslipClientLoadState');
+
+    $client
+        .prop('disabled', false)
+        .empty()
+        .append(new Option('Client list unavailable - retry below', '', true, true))
+        .attr('aria-invalid', 'true')
+        .attr('aria-describedby', 'payslipClientLoadState')
+        .trigger('change.select2');
+
+    if (host && window.HrisActionableErrors) {
+        window.HrisActionableErrors.render(host, error, {
+            title: 'The Payslip client list could not be loaded',
+            resolution: 'Retry the client list. If it still fails, keep the error reference and contact the application administrator.',
+            secondaryLabel: 'Retry client list',
+            onSecondary: function () {
+                clearPayslipClientLoadError();
+                getClientFilter();
+            }
+        });
+    } else if (host) {
+        host.className = 'alert alert-danger';
+        host.textContent = error.error;
+        host.style.display = '';
+    }
+
+    if (host && typeof host.scrollIntoView === 'function') {
+        host.scrollIntoView({block: 'nearest'});
+    }
+    focusPayslipClientFilter();
+}
 
 function clearFilter() {
     $('#client').val(null).trigger('change');
@@ -254,21 +330,39 @@ function getClientFilter(){
         contentType: false,
         processData: false,
         beforeSend: function( xhr ) {
-            $('#client').attr('disabled',true);
-            $('#client').empty();
+            clearPayslipClientLoadError();
+            $('#client')
+                .prop('disabled', true)
+                .empty()
+                .append(new Option('Loading clients...', '', true, true))
+                .trigger('change.select2');
         },
-        success: function (response) { 
-            $('#client').append(`<option value="" disabled selected>Select Client</option>`);
+        success: function (response) {
+            if (!response || Number(response.success) !== 1 || !Array.isArray(response.data)) {
+                showPayslipClientLoadError(response || {
+                    error_code: 'CONNECTION_FAILED',
+                    error: 'The client list response was incomplete.'
+                });
+                return;
+            }
+
+            clearPayslipClientLoadError();
+            $('#client').empty().append(`<option value="" disabled selected>Select Client</option>`);
 
             response.data.forEach(option => {
                 var option1 = new Option(option.client_name, option.client_name, false, false);
                 $('#client').append(option1);
             });
 
-            $('#client').trigger('change'); 
-            $('#client').attr('disabled',false);
+            $('#client').prop('disabled', false).trigger('change.select2');
 
             getPayType();
+        },
+        error: function (xhr) {
+            showPayslipClientLoadError(parsePayslipRequestError(
+                xhr,
+                'Unable to load the client list. Check your connection and retry.'
+            ));
         }
     });
 }

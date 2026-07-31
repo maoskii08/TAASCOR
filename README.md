@@ -120,6 +120,8 @@ php tests/PayrollDashboardTest.php
 php tests/PayrollDataQualityTest.php
 php tests/PayrollInputAdjustmentContainmentTest.php
 php tests/PayrollInputAdjustmentGuardTest.php
+php tests/PayslipClientFilterResilienceTest.php
+php tests/RuntimeDependencyClosureTest.php
 php tests/StoredRoutineManifestTest.php
 php employee-management/tests/EmployeeImportStagingContainmentTest.php
 php employee-management/tests/EmployeeImportTransferContainmentTest.php

@@ -197,6 +197,12 @@ auth_require_role([1, 3]);
 
                 </div>
 
+                <div class="row mt-3">
+                  <div class="col-12">
+                    <div id="payslipClientLoadState" role="alert" aria-live="assertive" style="display:none"></div>
+                  </div>
+                </div>
+
                 <div class="row mt-2">
 
                   <div class="col-sm-3">
@@ -272,7 +278,7 @@ auth_require_role([1, 3]);
     <!-- / Layout wrapper -->
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-09.js?v=20260728-owner-approval"></script>
+    <script src="js/index-09.js?v=20260731-client-load-recovery"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>
