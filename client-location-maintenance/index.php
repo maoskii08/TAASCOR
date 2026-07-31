@@ -224,7 +224,7 @@ auth_require_role([1,3]);
     </div>
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-01.js?v=20260531"></script>
+    <script src="js/index-01.js?v=20260731a"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 </body>
 

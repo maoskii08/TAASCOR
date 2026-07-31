@@ -11,6 +11,9 @@
 
     <script src="../../../assets/vendor/libs/jquery/jquery.js"></script>
     <script>
+        var successfulSaves = parseInt(sessionStorage.getItem('maintenance-success-count') || '0', 10);
+        $('#result').text('success count ' + successfulSaves);
+
         $('#addBtn').on('click', function () {
             $.ajax({
                 url: 'save-response.json',
@@ -19,7 +22,8 @@
                     $('#addBtn').html('Saving... <i>spinner</i>').prop('disabled', true);
                 },
                 success: function () {
-                    $('#result').text('success completed');
+                    sessionStorage.setItem('maintenance-success-count', String(successfulSaves + 1));
+                    window.location.reload();
                 }
             });
         });

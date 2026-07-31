@@ -220,7 +220,7 @@
     </div>
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-02.js?v=20260531"></script>
+    <script src="js/index-02.js?v=20260731a"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 </body>
 

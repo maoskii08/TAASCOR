@@ -55,12 +55,7 @@ function addBranch(){
         success: function (response) { 
             $("#addModal").modal('hide');
             if(response.success == 1){
-                swal.fire({
-                    icon: 'success',   
-                    title: 'Successfully Added Branch!'       
-                }).then(function (result) {
-                    window.location.reload()
-                });
+                window.location.reload();
             }else{
                 swal.fire({
                     icon: 'error',   
@@ -117,12 +112,7 @@ function saveChanges(){
         success: function (response) { 
             $("#editModal").modal('hide');
             if(response.success == 1){
-                swal.fire({
-                    icon: 'success',   
-                    title: 'Successfully Saved Changes!'       
-                }).then(function (result) {
-                    window.location.reload()
-                });
+                window.location.reload();
             }else{
                 swal.fire({
                     icon: 'error',   
@@ -256,5 +246,4 @@ function getBranchList() {
             
         });
 }
-
 
