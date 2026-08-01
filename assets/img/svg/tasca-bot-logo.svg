@@ -1,6 +1,6 @@
 <svg width="216" height="216" viewBox="0 0 216 216" fill="none" xmlns="http://www.w3.org/2000/svg">
   <title>TASCA AI bot logo</title>
-  <desc>TAASCOR hexagonal brand badge with an enlarged Boxicons bot symbol and gold intelligence details.</desc>
+  <desc>TAASCOR hexagonal brand badge with an enlarged yellow-outline Boxicons bot symbol.</desc>
   <defs>
     <linearGradient id="tascaBotBorder" x1="153.052" y1="27.668" x2="49.8154" y2="171.484" gradientUnits="userSpaceOnUse">
       <stop stop-color="#FEEF33"/>
@@ -15,7 +15,7 @@
   <circle cx="61.5214" cy="180.57" r="10.0307" fill="#BF1E2C"/>
   <circle cx="17.3866" cy="103.663" r="10.0307" fill="#BF1E2C"/>
   <circle cx="59.5153" cy="31.4294" r="10.0307" fill="#BF1E2C"/>
-  <g transform="translate(38 162) scale(.128 -.128)" fill="#FFFFFF" stroke="#173D78" stroke-width="10" stroke-linejoin="round" paint-order="stroke fill">
+  <g transform="translate(38 162) scale(.128 -.128)" fill="none" stroke="#FEDD21" stroke-width="24" stroke-linecap="round" stroke-linejoin="round">
     <path d="M935.595 464.768c-8.619 20.821-27.093 25.813-39.595 27.008v126.891c0 47.061-38.272 85.333-85.333 85.333h-256v59.307c13.013 11.691 21.333 28.501 21.333 47.36 0 35.346-28.654 64-64 64s-64-28.654-64-64v0c0-18.859 8.32-35.669 21.333-47.36v-59.307h-256c-47.061 0-85.333-38.272-85.333-85.333v-127.872l-3.499-0.256c-22.199-1.651-39.585-20.063-39.595-42.538v-85.334c0-23.564 19.103-42.667 42.667-42.667v0h0.427v-213.333c0-47.061 38.272-85.333 85.333-85.333h597.333c47.061 0 85.333 38.272 85.333 85.333v213.333c23.564 0 42.667 19.103 42.667 42.667v0 82.688c0.075 0.951 0.118 2.058 0.118 3.176 0 5.855-1.172 11.436-3.295 16.521l0.105-0.284zM213.333 106.667v512h597.333l0.043-170.496-0.043-0.171v-85.333l0.043-0.213 0.043-255.787h-597.419zM426.667 448c0-47.128-28.654-85.333-64-85.333s-64 38.205-64 85.333c0 47.128 28.654 85.333 64 85.333s64-38.205 64-85.333zM725.333 448c0-47.128-28.654-85.333-64-85.333s-64 38.205-64 85.333c0 47.128 28.654 85.333 64 85.333s64-38.205 64-85.333zM341.333 277.333h341.333v-85.333h-341.333z"/>
   </g>
   <circle cx="103.5" cy="58.2" r="5.6" fill="#FEDD21"/>

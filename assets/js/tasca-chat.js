@@ -3,7 +3,7 @@
 
     var allowedRoles = ['1', '2', '3', '4', '5'];
     var aiEndpoint = '../tasca-ai/chat.php';
-    var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801c';
+    var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801f';
     var registry = window.HrisHelpGuides || {};
     var guides = registry.guides || {};
     var maxMessages = 30;

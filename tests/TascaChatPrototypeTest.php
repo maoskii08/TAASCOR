@@ -22,14 +22,16 @@ $gemini = (string)file_get_contents($root . '/includes/tasca_gemini.php');
 $employeeReader = (string)file_get_contents($root . '/includes/tasca_employee_reader.php');
 
 $check(str_contains($footer, 'tasca-chat.css?v=20260801b'), 'TASCA styles load globally on authenticated pages');
-$check(str_contains($footer, 'tasca-chat.js?v=20260801e'), 'TASCA secure-read script loads globally on authenticated pages');
-$check(str_contains($script, "var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801c';"), 'TASCA uses the branded bot badge asset');
+$check(str_contains($footer, 'tasca-chat.js?v=20260801f'), 'TASCA secure-read script loads globally on authenticated pages');
+$check(str_contains($script, "var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801f';"), 'TASCA uses the branded bot badge asset');
 $check(substr_count($script, 'brandMarkPath') >= 4, 'launcher, header, and assistant messages share the branded bot badge');
 $check(str_contains($brandMark, '<title>TASCA AI bot logo</title>'), 'branded badge has an accessible SVG title');
 $check(str_contains($brandMark, 'TAASCOR hexagonal brand badge'), 'branded badge preserves the TAASCOR hexagonal identity');
 $check(str_contains($brandMark, 'M935.595 464.768'), 'branded badge contains the bundled Boxicons bot glyph');
 $check(str_contains($brandMark, 'translate(38 162) scale(.128 -.128)'), 'Boxicons bot glyph is optically enlarged for small-size clarity');
-$check(substr_count($brandMark, 'fill="#FEDD21"') >= 3, 'bot glyph uses restrained gold intelligence details');
+$check(str_contains($brandMark, 'fill="none" stroke="#FEDD21" stroke-width="24"'), 'bot glyph uses a crisp yellow outline');
+$check(!str_contains($brandMark, 'fill="#FFFFFF"'), 'bot glyph no longer has a white fill');
+$check(substr_count($brandMark, 'fill="#FEDD21"') >= 3, 'bot glyph retains restrained gold intelligence details');
 $check(!str_contains($script, 'tasca-chat-launcher-mark" aria-hidden="true">T</span>'), 'launcher no longer renders the circular yellow T mark');
 $check(
     strpos($footer, 'hris-help-guides.js') < strpos($footer, 'tasca-chat.js'),
