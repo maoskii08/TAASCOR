@@ -1,13 +1,20 @@
 <?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,3,5]);
 require('../assets/vendor/libs/fpdf/fpdf.php');
 require('../config/db_connect.php');
+
+function pdf_amount($value): string
+{
+    return number_format((float)($value ?? 0), 2);
+}
 
 
 
 class PDF extends FPDF {
     function Header() {
-        $loan_type = strtoupper($_GET["lt"]);
-        $loan_date = $_GET["ld"];
+        $loan_type = strtoupper($GLOBALS['loan_type'] ?? '');
+        $loan_date = $GLOBALS['loan_date'] ?? '';
 
         $date = new DateTime($loan_date);
         $formattedDate = strtoupper($date->format("F, Y"));
@@ -43,11 +50,17 @@ class PDF extends FPDF {
 }
 
 
+$loan_type = $_GET["lt"] ?? '';
+$loan_date = $_GET["ld"] ?? '';
+$loanDateObject = DateTime::createFromFormat('Y-m-d', $loan_date);
+if (!$loan_type || !$loanDateObject || $loanDateObject->format('Y-m-d') !== $loan_date) {
+    http_response_code(400);
+    exit('Invalid report parameters.');
+}
+
 $pdf = new PDF();
 $pdf->AddPage();
 $pdf->SetFont('Arial', '', 9);
-$loan_type = $_GET["lt"];
-$loan_date = $_GET["ld"];
 $db = $pdoConn;
 $sql = "WITH ranked_payments AS (
             SELECT 
@@ -66,9 +79,9 @@ $sql = "WITH ranked_payments AS (
             INNER JOIN employee_loans c 
                 ON a.employee_id = c.employee_id 
                 AND a.loan_type = c.loan_type
-            WHERE MONTH(a.pay_day) = MONTH('{$loan_date}') 
-                AND YEAR(a.pay_day) = YEAR('{$loan_date}')
-                AND a.loan_type = '{$loan_type}'
+            WHERE MONTH(a.pay_day) = MONTH(:loan_date)
+                AND YEAR(a.pay_day) = YEAR(:loan_date)
+                AND a.loan_type = :loan_type
         )
 
         SELECT 
@@ -81,6 +94,8 @@ $sql = "WITH ranked_payments AS (
         GROUP BY employee_id, loan_date";
 
 $stmt = $db->prepare($sql);
+$stmt->bindValue(':loan_date', $loan_date, PDO::PARAM_STR);
+$stmt->bindValue(':loan_type', $loan_type, PDO::PARAM_STR);
 $stmt->execute();
 $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -89,9 +104,9 @@ foreach ($data as $row) {
     $pdf->Cell(10, 7, $counter++, 1, 0, 'C');
     $pdf->Cell(50, 7, $row['employee_full_name'], 1);
     $pdf->Cell(30, 7, $row['date_awarded'], 1, 0, 'C');
-    $pdf->Cell(30, 7, number_format($row['first_cutoff'], 2), 1, 0, 'R');
-    $pdf->Cell(30, 7, number_format($row['second_cutoff'], 2), 1, 0, 'R');
-    $pdf->Cell(40, 7, number_format($row['total_collected'], 2), 1, 1, 'R');
+    $pdf->Cell(30, 7, pdf_amount($row['first_cutoff']), 1, 0, 'R');
+    $pdf->Cell(30, 7, pdf_amount($row['second_cutoff']), 1, 0, 'R');
+    $pdf->Cell(40, 7, pdf_amount($row['total_collected']), 1, 1, 'R');
 }
 
 $pdf->Output();

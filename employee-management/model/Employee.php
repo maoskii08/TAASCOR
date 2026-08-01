@@ -294,28 +294,17 @@ class Employee
         try {
             $this->db->beginTransaction();
             $placeholders = str_repeat('?,', count($this->employee_id_array) - 1) . '?';
-            $sql = "DELETE FROM employee_details
-                    WHERE employee_id in ($placeholders)";
-            $stmt = $this->db->prepare($sql);
-            $stmt->execute($this->employee_id_array);
-
-            $sql = "DELETE FROM employee_salary
-                    WHERE employee_id in ($placeholders)";
-            $stmt = $this->db->prepare($sql);
-            $stmt->execute($this->employee_id_array);
-
-            $sql = "DELETE FROM employee_govt_account
-                    WHERE employee_id in ($placeholders)";
-            $stmt = $this->db->prepare($sql);
-            $stmt->execute($this->employee_id_array);
-
-            $sql = "DELETE FROM employee_list
-                    WHERE employee_id in ($placeholders)";
+            $sql = "UPDATE employee_list
+                    SET status = 'Removed',
+                        separation_date = COALESCE(separation_date, CURDATE())
+                    WHERE employee_id in ($placeholders)
+                      AND status = 'Active'";
             $stmt = $this->db->prepare($sql);
             $stmt->execute($this->employee_id_array);
 
             $response['success'] = 1;
-                        $this->db->commit(); 
+            $response['removed_count'] = $stmt->rowCount();
+            $this->db->commit();
         } catch (\Throwable $th) {
             $this->db->rollBack();
             $response['success'] = 0;
@@ -621,7 +610,7 @@ class Employee
                 $where = "WHERE client_name <> 'No Client' ";
             }
 
-            $sql = "SELECT distinct client_name from taascor_client
+            $sql = "SELECT DISTINCT client_id, client_name FROM taascor_client
                     $where order by client_name";
 
             $stmt = $this->db->prepare($sql);

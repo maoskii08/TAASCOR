@@ -1,7 +1,8 @@
-let fileName = "DTR";
+let fileName = "Deduction";
 let access_level = $('#access_level').val();
 let payrollDetails = [];
 let employeeArray = [];
+let buttonArray = [];
 let file_data = 
         {
             "columns" : ['Employee ID','Employee Full Name','Amount','Type of Deduction']
@@ -10,42 +11,123 @@ let file_data =
 
 document.getElementById('clearBtn').addEventListener("click", clearFilter);
 document.getElementById('filterBtn').addEventListener("click", getDeductionList);
-document.getElementById('addBtn').addEventListener("click", individualAdditional);
+document.getElementById('addBtn').addEventListener("click", individualDeduction);
 
 $( document ).ready(function() {
+    // custom-footer loads legacy SweetAlert after SweetAlert2. Preserve the
+    // existing module API while guaranteeing that .fire is SweetAlert2.
+    if (window.Swal && typeof window.Swal.fire === 'function') {
+        window.swal = window.Swal;
+    }
     importExcel();
     getClientFilter();
 });
 
 $("#client").change(function() {
     let client_selected = $(this).val();
-    if(client_selected != null){
+    resetPayrollSelection();
+    if(client_selected){
         getPayDay(client_selected);
-    }    
+        getBranch(client_selected);
+        getClientLocation(client_selected);
+    }
 });
 
 $("#add-employee-id").change(function() {
-    let employee_id = $(this).val();
-    if(employee_id != ''){
-        let employeeMap = new Map(employeeArray.map(e => [e[0], e]));
-        let employee = employeeMap.get(Number(employee_id));
-        if (employee) {
-            $("#add-employee-name").val(employee[1]);
-        }else{
-            swal.fire({
-                icon: 'info',   
-                title: 'Invalid Employee ID',                 
-                text: "Please input the correct employee id"               
-            });
-        }
-    }    
+    const selected = $(this).find(':selected');
+    $("#add-employee-name").val(selected.data('employee-name') || '');
 });
 
 function clearFilter() {
     $('#client').val(null).trigger('change');
     $('#payDay').val(null).trigger('change');
+    $('#branch').val(null).trigger('change');
+    $('#clientLocation').val(null).trigger('change');
     $('#tblDiv').hide();
+    $('#table_container').empty();
     payrollDetails = [];
+    employeeArray = [];
+    populateEmployeeSelect([]);
+}
+
+function resetPayrollSelection() {
+    $('#payDay').empty().append('<option value="">Select Pay Day</option>').val(null).trigger('change');
+    $('#branch').empty().append('<option value="">All branches</option>').val('').trigger('change');
+    $('#clientLocation').empty().append('<option value="">All locations</option>').val('').trigger('change');
+    $('#tblDiv').hide();
+    $('#table_container').empty();
+    payrollDetails = [];
+    employeeArray = [];
+    populateEmployeeSelect([]);
+}
+
+function responseMessage(response, fallback) {
+    if (response && response.error) {
+        return typeof response.error === 'string'
+            ? response.error
+            : (response.error.message || fallback);
+    }
+    if (response && response.message) {
+        return response.message;
+    }
+    if (response && response.responseJSON) {
+        return responseMessage(response.responseJSON, fallback);
+    }
+    return fallback;
+}
+
+function showPayrollAlert(icon, title, text) {
+    return Swal.fire({ icon, title, text });
+}
+
+function escapeHtml(value) {
+    return $('<div>').text(String(value == null ? '' : value)).html();
+}
+
+function adjustmentAuditHtml(response, summary) {
+    const eventId = String(response && response.audit_event_id || '').trim().toUpperCase();
+    if (!/^[A-F0-9]{24}$/.test(eventId)) {
+        return escapeHtml(summary) + '<br><strong>Audit evidence unavailable:</strong> no valid event identifier was returned.';
+    }
+    const link = '../audit-log/?adjustment_event=' + encodeURIComponent(eventId);
+    return escapeHtml(summary)
+        + '<br><a class="btn btn-sm btn-outline-primary mt-3" href="' + link + '">Review audit event '
+        + escapeHtml(eventId) + '</a>';
+}
+
+function setAddBusy(isBusy) {
+    $('#addBtn')
+        .prop('disabled', isBusy)
+        .html(isBusy ? 'Saving... <i class="fa fa-spinner fa-spin"></i>' : 'Add');
+}
+
+function resetAddForm() {
+    $('#add-employee-id').val(null).trigger('change');
+    $('#add-employee-name').val('');
+    $('#add-amount').val('');
+    $('#add-type-of-deduction').val('');
+    $('#add-change-reason').val('');
+    $('#add-evidence-reference').val('');
+}
+
+function populateEmployeeSelect(rows) {
+    const employeeSelect = $('#add-employee-id');
+    const employees = new Map();
+    rows.forEach((row) => {
+        const employeeId = Number(row[0]);
+        if (Number.isInteger(employeeId) && employeeId > 0 && !employees.has(employeeId)) {
+            employees.set(employeeId, String(row[1] || ''));
+        }
+    });
+    employeeSelect.empty().append('<option value="">Select an employee from this DTR</option>');
+    Array.from(employees.entries())
+        .sort((a, b) => a[1].localeCompare(b[1]))
+        .forEach(([employeeId, employeeName]) => {
+            const option = new Option(`${employeeName} (${employeeId})`, employeeId, false, false);
+            $(option).attr('data-employee-name', employeeName);
+            employeeSelect.append(option);
+        });
+    employeeSelect.val(null).trigger('change');
 }
 
 function importExcel() {
@@ -63,33 +145,38 @@ function importExcel() {
     // console.log(obj)
 
     new ExcelImport({
-        maxInAGroup: 100,
+        maxWorkbookRows: 1000,
+        maxWorkbookBytes: 1048576,
         serverColumnNames: file_data['columns'],
         importTypeSelector: "#dataType",
         fileChooserSelector: "#fileUploader",
         outputSelector: "#tableOutput",
         extraData: {
             importID: 0,
-            cmd: "batch_upload",
             obj
         }
     });
 }
 
 
-function individualAdditional(){
+function individualDeduction(){
     let employee_id = $('#add-employee-id').val();
     let employee_name = $('#add-employee-name').val();
-    let amount = $('#add-amount').val();
-    let type_of_deduction = $('#add-type-of-deduction').val();
+    let amount = String($('#add-amount').val() || '').trim();
+    let type_of_deduction = String($('#add-type-of-deduction').val() || '').trim();
+    let change_reason = String($('#add-change-reason').val() || '').trim();
+    let evidence_reference = String($('#add-evidence-reference').val() || '').trim();
 
-    if(employee_id == '' || amount == '' || type_of_deduction.trim() == ''){
-        swal.fire({
-            icon: 'info',   
-            title: 'Required Fields!',       
-            text: 'Please complete the all fields.'
-        });
-
+    if (!employee_id || !/^\d{1,8}(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 99999999.99) {
+        showPayrollAlert('info', 'Check employee and amount', 'Select an employee and enter a positive amount up to 99,999,999.99 with no more than two decimal places.');
+        return false;
+    }
+    if (type_of_deduction.length < 2 || type_of_deduction.length > 50 || change_reason.length < 5 || evidence_reference.length < 3) {
+        showPayrollAlert('info', 'Required audit details', 'Enter a deduction type, a business reason, and an approval, ticket, or source reference.');
+        return false;
+    }
+    if (payrollDetails.length !== 1) {
+        showPayrollAlert('warning', 'Payroll scope unavailable', 'Filter a client and pay day before adding a deduction.');
         return false;
     }
 
@@ -99,12 +186,14 @@ function individualAdditional(){
     formdata.append("employee_name", employee_name);
     formdata.append("amount", amount);
     formdata.append("type_of_deduction", type_of_deduction);
+    formdata.append("change_reason", change_reason);
+    formdata.append("evidence_reference", evidence_reference);
     for(let i=0; i < payrollDetails.length; i++) {
         formdata.append("client_name", payrollDetails[i][0]);
         formdata.append("cut_off", payrollDetails[i][1]);
         formdata.append("pay_day", payrollDetails[i][2]);
-        formdata.append("start_date", payrollDetails[i][2]);
-        formdata.append("end_date", payrollDetails[i][2]);
+        formdata.append("start_date", payrollDetails[i][3]);
+        formdata.append("end_date", payrollDetails[i][4]);
     }
 
     $.ajax({
@@ -115,38 +204,29 @@ function individualAdditional(){
         processing: true, 
         contentType: false,
         processData: false,
-        beforeSend: function( xhr ) {
-            $('#addBtn').html('Saving... <i class="fa fa-spinner fa-spin"></i>');
-            $('#addBtn').attr('disabled',true);
+        beforeSend: function() {
+            setAddBusy(true);
         },
         success: function (response) { 
-            $("#addModal").modal('hide');
             if(response.success == 1){
-                swal.fire({
-                    icon: 'success',   
-                    title: 'Successfully Added!'       
-                }).then(function (result) {
+                $("#addModal").modal('hide');
+                resetAddForm();
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Deduction added',
+                    html: adjustmentAuditHtml(response, 'The deduction, payroll recalculation, and exact audit evidence committed together.')
+                }).then(function () {
                     getDeductionList();
                 });
             }else{
-                swal.fire({
-                    icon: 'error',   
-                    title: 'Something went wrong!',                 
-                    text: "Error Message: " + response.error + ""               
-                }).then(function (result) {
-                    window.location.reload()
-                });
+                showPayrollAlert('error', 'Deduction not saved', responseMessage(response, 'Review the payroll scope and try again.'));
             }
         },
-        error: function(response) { // if error occured
-            $("#addModal").modal('hide');
-            swal.fire({
-                icon: 'error',   
-                title: 'Something went wrong!',                 
-                text: "Error Message: " + response.error + ""               
-            }).then(function (result) {
-                window.location.reload()
-            });
+        error: function(xhr) {
+            showPayrollAlert('error', 'Deduction not saved', responseMessage(xhr, 'The request could not be completed.'));
+        },
+        complete: function() {
+            setAddBusy(false);
         }
     });
 }
@@ -155,20 +235,62 @@ function individualAdditional(){
 $(document).on("click","#dtrTbl #deleteBtn",function() {
     let id = $(this).val();
 
-    var row = $(this).closest('tr');
-    var employee_id = row.find('td:eq(0)').text();
+    let row = $(this).closest('tr');
+    if (row.hasClass('child')) {
+        row = row.prev();
+    }
+    const tableRow = $.fn.DataTable.isDataTable('#dtrTbl')
+        ? $('#dtrTbl').DataTable().row(row).data()
+        : null;
+    const employee_id = Number(
+        $(this).data('employee-id')
+        || (Array.isArray(tableRow) ? tableRow[0] : null)
+        || row.find('td:eq(0)').text().trim()
+    );
+    if (!Number.isInteger(employee_id) || employee_id <= 0 || payrollDetails.length !== 1) {
+        showPayrollAlert('error', 'Deduction not selected', 'Refresh the filtered payroll population and try again.');
+        return;
+    }
     
     Swal.fire({
-        title: 'Are you sure you want to delete this deduction?', 
-        html: 'Click Yes to proceed.',
-        icon: 'question',  
+        title: 'Delete this payroll deduction?',
+        html: `
+            <label for="delete-change-reason" class="form-label text-start d-block">Business reason</label>
+            <input id="delete-change-reason" class="swal2-input mt-0" maxlength="255" placeholder="Why must this deduction be deleted?">
+            <label for="delete-evidence-reference" class="form-label text-start d-block">Approval or evidence reference</label>
+            <input id="delete-evidence-reference" class="swal2-input mt-0" maxlength="255" placeholder="Ticket, approval, or source">
+            <label for="delete-confirmation" class="form-label text-start d-block">Type DELETE to confirm</label>
+            <input id="delete-confirmation" class="swal2-input mt-0" autocomplete="off" placeholder="DELETE">
+        `,
+        icon: 'warning',
         showCancelButton: true,
-        confirmButtonText: `Yes`,
-        denyButtonText: `Cancel`,
+        confirmButtonText: 'Delete deduction',
+        confirmButtonColor: '#d33',
+        focusConfirm: false,
+        preConfirm: () => {
+            const changeReason = String($('#delete-change-reason').val() || '').trim();
+            const evidenceReference = String($('#delete-evidence-reference').val() || '').trim();
+            const confirmation = String($('#delete-confirmation').val() || '').trim().toUpperCase();
+            if (changeReason.length < 5) {
+                Swal.showValidationMessage('Enter a business reason with at least five characters.');
+                return false;
+            }
+            if (evidenceReference.length < 3) {
+                Swal.showValidationMessage('Enter an approval, ticket, or source reference.');
+                return false;
+            }
+            if (confirmation !== 'DELETE') {
+                Swal.showValidationMessage('Type DELETE exactly to confirm.');
+                return false;
+            }
+            return {
+                change_reason: changeReason,
+                evidence_reference: evidenceReference,
+                confirmation
+            };
+        }
     }).then((result) => {
-        
-        /* Read more about isConfirmed, isDenied below */
-        if (result.value) {
+        if (result.isConfirmed) {
 
             let formdata = new FormData();
             formdata.append("request", 'delete');
@@ -178,7 +300,12 @@ $(document).on("click","#dtrTbl #deleteBtn",function() {
                 formdata.append("client_name", payrollDetails[i][0]);
                 formdata.append("cut_off", payrollDetails[i][1]);
                 formdata.append("pay_day", payrollDetails[i][2]);
+                formdata.append("start_date", payrollDetails[i][3]);
+                formdata.append("end_date", payrollDetails[i][4]);
             }
+            formdata.append("change_reason", result.value.change_reason);
+            formdata.append("evidence_reference", result.value.evidence_reference);
+            formdata.append("confirmation", result.value.confirmation);
             
             $.ajax({
                 url: 'controller/DeductionController.php',
@@ -193,37 +320,23 @@ $(document).on("click","#dtrTbl #deleteBtn",function() {
                 // success: function (response) {
 
                     if(response.success == 1){
-
-                        swal.fire({
-                            icon: 'success',   
-                            title: 'Successfully Deleted Deduction! '        
-                        }).then(function (result) {
+                        Swal.fire({
+                            icon: 'success',
+                            title: 'Deduction deleted',
+                            html: adjustmentAuditHtml(response, 'The removal, payroll recalculation, and exact audit evidence committed together.')
+                        }).then(function () {
                             getDeductionList()
                         });
-
                     }else{
-
-                        swal.fire({
-                            icon: 'error',   
-                            title: 'Something went wrong!',                 
-                            text: "Error Message: " + response.error + ""               
-                        }).then(function (result) {
-                            window.location.reload()
-                        });
+                        showPayrollAlert('error', 'Deduction not deleted', responseMessage(response, 'Review the payroll scope and try again.'));
                     }
                 
                 })
-                .fail(function (response) {
-                    swal.fire({
-                        icon: 'error',   
-                        title: 'Something went wrong!',                 
-                        text: "Error Message: " + response.error + ""               
-                    }).then(function (result) {
-                        window.location.reload()
-                    });
+                .fail(function (xhr) {
+                    showPayrollAlert('error', 'Deduction not deleted', responseMessage(xhr, 'The request could not be completed.'));
                 });
         } 
-    })
+    });
 });
 
 function getClientFilter(){
@@ -239,20 +352,27 @@ function getClientFilter(){
         processing: true, 
         contentType: false,
         processData: false,
-        beforeSend: function( xhr ) {
+        beforeSend: function() {
             $('#client').attr('disabled',true);
             $('#client').empty();
         },
         success: function (response) { 
-            $('#client').append(`<option value="" disabled selected>Select Client</option>`);
+            $('#client').append('<option value="">Select Client</option>');
 
-            response.data.forEach(option => {
+            (Array.isArray(response.data) ? response.data : []).forEach(option => {
                 var option1 = new Option(option.client_name, option.client_name, false, false);
                 $('#client').append(option1);
             });
 
-            $('#client').trigger('change'); 
+            $('#client').val(null).trigger('change');
             $('#client').attr('disabled',false);
+            if (response.success !== 1) {
+                showPayrollAlert('error', 'Clients unavailable', responseMessage(response, 'Unable to load active payroll clients.'));
+            }
+        },
+        error: function(xhr) {
+            $('#client').attr('disabled', false);
+            showPayrollAlert('error', 'Clients unavailable', responseMessage(xhr, 'Unable to load active payroll clients.'));
         }
     });
 }
@@ -271,23 +391,28 @@ function getPayDay(client_selected){
         processing: true, 
         contentType: false,
         processData: false,
-        beforeSend: function( xhr ) {
+        beforeSend: function() {
             $('#payDay').attr('disabled',true);
             $('#payDay').empty();
         },
         success: function (response) { 
-            $('#payDay').append(`<option value="" disabled selected>Select Pay Day</option>`);
+            $('#payDay').append('<option value="">Select Pay Day</option>');
 
-            response.data.forEach(option => {
+            (Array.isArray(response.data) ? response.data : []).forEach(option => {
                 var dataOption = new Option(formatDate(option.pay_date), option.pay_date, false, false);
                 $(dataOption).attr("data-sd", option.start_date).attr("data-ed", option.end_date).attr("data-co", option.cut_off);
                 $('#payDay').append(dataOption);
             });
 
-            $('#payDay').trigger('change'); 
+            $('#payDay').val(null).trigger('change');
             $('#payDay').attr('disabled',false);
-
-            getBranch(client_selected);
+            if (response.success !== 1) {
+                showPayrollAlert('error', 'Pay days unavailable', responseMessage(response, 'Unable to load payroll periods.'));
+            }
+        },
+        error: function(xhr) {
+            $('#payDay').attr('disabled', false);
+            showPayrollAlert('error', 'Pay days unavailable', responseMessage(xhr, 'Unable to load payroll periods.'));
         }
     });
 }
@@ -306,22 +431,24 @@ function getBranch(client_selected){
         processing: true, 
         contentType: false,
         processData: false,
-        beforeSend: function( xhr ) {
+        beforeSend: function() {
             $('#branch').attr('disabled',true);
             $('#branch').empty();
         },
         success: function (response) { 
-            $('#branch').append(`<option value="" disabled selected>Select Branch</option>`);
+            $('#branch').append('<option value="">All branches</option>');
 
-            response.data.forEach(option => {
+            (Array.isArray(response.data) ? response.data : []).forEach(option => {
                 var dataOption = new Option(option.branch_name, option.branch_id, false, false);
                 $('#branch').append(dataOption);
             });
 
-            $('#branch').trigger('change'); 
+            $('#branch').val('').trigger('change');
             $('#branch').attr('disabled',false);
-
-            getClientLocation(client_selected);
+        },
+        error: function(xhr) {
+            $('#branch').empty().append('<option value="">All branches</option>').attr('disabled', false);
+            showPayrollAlert('error', 'Branches unavailable', responseMessage(xhr, 'Unable to load branches.'));
         }
     });
 }
@@ -340,26 +467,34 @@ function getClientLocation(client_selected){
         processing: true, 
         contentType: false,
         processData: false,
-        beforeSend: function( xhr ) {
+        beforeSend: function() {
             $('#clientLocation').attr('disabled',true);
             $('#clientLocation').empty();
         },
         success: function (response) { 
-            $('#clientLocation').append(`<option value="" disabled selected>Select Client Location</option>`);
+            $('#clientLocation').append('<option value="">All locations</option>');
 
-            response.data.forEach(option => {
+            (Array.isArray(response.data) ? response.data : []).forEach(option => {
                 var dataOption = new Option(option.location_name, option.location_id, false, false);
                 $('#clientLocation').append(dataOption);
             });
 
-            $('#clientLocation').trigger('change'); 
+            $('#clientLocation').val('').trigger('change');
             $('#clientLocation').attr('disabled',false);
+        },
+        error: function(xhr) {
+            $('#clientLocation').empty().append('<option value="">All locations</option>').attr('disabled', false);
+            showPayrollAlert('error', 'Locations unavailable', responseMessage(xhr, 'Unable to load client locations.'));
         }
     });
 }
 
 
 function importData() {
+    if (payrollDetails.length !== 1) {
+        showPayrollAlert('warning', 'Payroll scope unavailable', 'Filter a client and pay day with a DTR population before uploading deductions.');
+        return;
+    }
     $('#importModal').modal('show');
 }
 
@@ -369,6 +504,8 @@ $("#importModal").on('hidden.bs.modal', function (e) {
     $('#dataType').prop('disabled', false);
     $('#fileUploader').prop('disabled', false);
     document.getElementById('fileUploader').value= null;
+    $('#import-change-reason').val('');
+    $('#import-evidence-reference').val('');
 });
 
 function getDeductionList() {    
@@ -380,15 +517,13 @@ function getDeductionList() {
     let cut_off = $("#payDay option:selected").data("co");
     let branch = $("#branch").val();
 
-    if(client == null || pay_day == null){
-        swal.fire({
-            icon: 'info',   
-            title: 'Required Fields!',       
-            text: 'Please select client and pay day'
-        });
+    if(!client || !pay_day || !start_date || !end_date || !cut_off){
+        showPayrollAlert('info', 'Required payroll scope', 'Select a client and pay day before reviewing deductions.');
 
         $('#tblDiv').hide();
         payrollDetails = [];
+        employeeArray = [];
+        populateEmployeeSelect([]);
 
         return false;
     }
@@ -407,15 +542,17 @@ function getDeductionList() {
         url: 'controller/DeductionController.php',
         data: formdata,
         type: 'POST',
+        dataType: 'json',
         contentType: false,
         processData: false,
         beforeSend: function( xhr ) {
             $("#tblDiv").show();
-            $('#table_container').html(`<center>Loading ... <i class="fa fa-spinner fa-spin"></i></center>`);
+            $('#table_container').html('<div class="text-center" role="status">Loading deductions <i class="fa fa-spinner fa-spin" aria-hidden="true"></i></div>');
         },
         success: function(response){
             if(response.success == 1){
-                if(response.data.length > 0){
+                const rows = Array.isArray(response.data) ? response.data : [];
+                if(rows.length > 0){
                     fileName = "Deduction";
                     if(client != null && client != ''){
                         fileName += "_" + client;
@@ -429,6 +566,8 @@ function getDeductionList() {
                             text: '<i class="bx bx-plus"></i> Add Deduction',
                             className: 'btn btn-sm btn-outline-primary',
                             action: function (e, dt, node, config) {
+                                resetAddForm();
+                                populateEmployeeSelect(employeeArray);
                                 $("#addModal").modal("show");            
                             }
                         },
@@ -444,12 +583,11 @@ function getDeductionList() {
                             title: null,
                             className: 'btn btn-sm btn-outline-secondary',
                             text: '<i class="bx bx-download"></i> Download',
-                            filename: fileName,
-                            exportOptions: {
-                                columns: function (index, data, node) {
-                                    // Exclude the first column (index 0)
-                                    return index !== 4;
-                                },
+                                filename: fileName,
+                                exportOptions: {
+                                    columns: function (index, data, node) {
+                                        return index !== 4;
+                                    },
                                 format: {
                                     header: function (data, column) {
                                         return data; 
@@ -468,6 +606,9 @@ function getDeductionList() {
                                 text: '<i class="bx bx-download"></i> Download',
                                 filename: fileName,
                                 exportOptions: {
+                                    columns: function (index) {
+                                        return index !== 4;
+                                    },
                                     format: {
                                         header: function (data, column) {
                                             return data; 
@@ -482,7 +623,7 @@ function getDeductionList() {
                     payrollDetails.push([client,cut_off,pay_day,start_date,end_date]);
                     var table = `
                     <div class="alert alert-primary" role="alert">
-                        Client: <a class="alert-link me-3">${client}</a>
+                        Client: <span class="alert-link me-3">${escapeHtml(client)}</span>
                         Cut Off: <a class="alert-link me-3">${formatDate(start_date)} to ${formatDate(end_date)}</a>
                         Pay Day: <a class="alert-link">${formatDate(pay_day)}</a>
                     </div>
@@ -502,9 +643,8 @@ function getDeductionList() {
                     $('#table_container').html('');
                     $('#table_container').html(table);
 
-                    $('#dtrTbl').DataTable().destroy();
                     $('#dtrTbl').DataTable({
-                        data: response.data,
+                        data: rows,
                         responsive: true,
                         lengthChange: true,
                         paging: true,
@@ -516,45 +656,58 @@ function getDeductionList() {
                         topStart: 'buttons',
                         },
                         dom: '<"dt-top-container"<l><"dt-center-in-div"B><f>r>t>ip>',
-                        buttons: buttonArray
+                        buttons: buttonArray,
+                        columnDefs: [
+                            {
+                                targets: [0, 1, 2, 3],
+                                render: $.fn.dataTable.render.text()
+                            },
+                            {
+                                targets: 4,
+                                orderable: false,
+                                searchable: false
+                            }
+                        ]
                     });
 
-                    employeeArray = response.data;
+                    employeeArray = rows;
+                    populateEmployeeSelect(employeeArray);
                 }else{
-                    swal.fire({
-                        icon: 'warning',   
-                        title: 'No DTR Upload',                 
-                        text: "Please go to DTR Upload Page First."               
-                    }).then(function (result) {
-                        window.location.reload()
-                    });
+                    payrollDetails = [];
+                    employeeArray = [];
+                    populateEmployeeSelect([]);
+                    $('#table_container').html(`
+                        <div class="alert alert-warning mb-0" role="alert">
+                            <h5 class="alert-heading mb-1">No DTR population found</h5>
+                            <p class="mb-2">Upload or reconcile the DTR for this exact client and payroll period before entering deductions.</p>
+                            <a class="btn btn-sm btn-outline-warning" href="../dtr-upload/">Go to DTR Upload</a>
+                        </div>
+                    `);
                 }                
             }else if(response.success == 2){
-                swal.fire({
-                    icon: 'warning',   
-                    title: 'No Pay Day Set',                 
-                    text: "Please go to Pay Day Maintenance and set a cutoff date"               
-                }).then(function (result) {
-                    window.location.reload()
-                });
+                payrollDetails = [];
+                employeeArray = [];
+                populateEmployeeSelect([]);
+                $('#table_container').html(`
+                    <div class="alert alert-warning mb-0" role="alert">
+                        <h5 class="alert-heading mb-1">No pay day configured</h5>
+                        <p class="mb-0">Configure the client cutoff and pay day before processing deductions.</p>
+                    </div>
+                `);
             }else{
-                swal.fire({
-                    icon: 'error',   
-                    title: 'Something went wrong!',                 
-                    text: "Error Message: " + response.error + ""               
-                }).then(function (result) {
-                    window.location.reload()
-                });
+                payrollDetails = [];
+                employeeArray = [];
+                populateEmployeeSelect([]);
+                $('#table_container').html('<div class="alert alert-danger mb-0" role="alert">Unable to load the payroll deduction population.</div>');
+                showPayrollAlert('error', 'Deductions unavailable', responseMessage(response, 'Review the selected payroll scope and try again.'));
             }
         },
-        error: function(response) { // if error occured
-            swal.fire({
-                icon: 'error',   
-                title: 'Something went wrong!',                 
-                text: "Error Message: " + response.error + ""               
-            }).then(function (result) {
-                window.location.reload()
-            });
+        error: function(xhr) {
+            payrollDetails = [];
+            employeeArray = [];
+            populateEmployeeSelect([]);
+            $('#table_container').html('<div class="alert alert-danger mb-0" role="alert">Unable to load the payroll deduction population.</div>');
+            showPayrollAlert('error', 'Deductions unavailable', responseMessage(xhr, 'The request could not be completed.'));
         }
     });
 }
@@ -565,8 +718,10 @@ function formatDateToYYYYMMDD(dateStr) {
 }
 
 function formatDate(dateString) {
-    const date = new Date(dateString);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateString || ''))) {
+        return String(dateString || '');
+    }
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(year, month - 1, day);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
-
-

@@ -165,7 +165,7 @@
     
     
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-07.js?v=20260531"></script>
+    <script src="js/index-07.js?v=20260727a"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>

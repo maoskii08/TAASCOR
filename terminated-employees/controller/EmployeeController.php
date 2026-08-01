@@ -27,8 +27,6 @@ if($_POST['request'] == 'get-employee-list'){
 
     if(isset($getList['error']) == false){
 
-        $response['sql'] = $getList['sql'];
-
         if(count($getList['data']) > 0){
             foreach ($getList['data'] as $key => $row) {
                 $employee_id = $row['employee_id'];
@@ -38,6 +36,8 @@ if($_POST['request'] == 'get-employee-list'){
                 if($_SESSION['taascor_access_level'] == "4"){
                     $response['data'][] = array(
                         $row['employee_id']
+                        ,$row['lifecycle_status']
+                        ,$row['separation_date']
                         ,$row['old_employee_id']
                         ,$row['payroll_employee_id']
                         ,$row['full_name']
@@ -45,7 +45,6 @@ if($_POST['request'] == 'get-employee-list'){
                         ,$row['first_name']
                         ,$row['middle_name']
                         ,$row['hire_date']
-                        ,$row['separation_date']
                         ,$row['present_address']
                         ,$row['permanent_address']
                         ,$row['contact_number']
@@ -78,6 +77,8 @@ if($_POST['request'] == 'get-employee-list'){
                     $response['data'][] = array(
                         $action
                         ,$row['employee_id']
+                        ,$row['lifecycle_status']
+                        ,$row['separation_date']
                         ,$row['old_employee_id']
                         ,$row['payroll_employee_id']
                         ,$row['full_name']
@@ -85,7 +86,6 @@ if($_POST['request'] == 'get-employee-list'){
                         ,$row['first_name']
                         ,$row['middle_name']
                         ,$row['hire_date']
-                        ,$row['separation_date']
                         ,$row['present_address']
                         ,$row['permanent_address']
                         ,$row['contact_number']
@@ -120,7 +120,6 @@ if($_POST['request'] == 'get-employee-list'){
         }   
     } else{
         $response['error'] = $getList['error'];
-        $response['sql'] = $getList['sql'];
     }
 
     echo json_encode($response);

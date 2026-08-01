@@ -1,6 +1,19 @@
 <?php
-    session_start();
-    session_destroy();
+    require_once('../includes/session_security.php');
+    taascor_start_secure_session();
+    $loginError = $_SESSION['error'] ?? null;
+    unset($_SESSION['error']);
+    require_once('../includes/csrf.php');
+
+    $nextPath = (string)($_GET['next'] ?? '');
+    if (
+        $nextPath === ''
+        || !str_starts_with($nextPath, '/')
+        || str_starts_with($nextPath, '//')
+        || preg_match('/[\r\n]/', $nextPath)
+    ) {
+        $nextPath = '';
+    }
 ?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
@@ -40,6 +53,8 @@
   <div class="container">
     <div class="form-box login">
       <form action="controller/LoginController.php" method="post" class="login">
+        <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token(), ENT_QUOTES, 'UTF-8'); ?>">
+        <input type="hidden" name="next_path" value="<?php echo htmlspecialchars($nextPath, ENT_QUOTES, 'UTF-8'); ?>">
         <img src="../assets/img/svg/logo.svg" class="img-fluid" width="380px">
         <h1 class="mb-5">Login</h1>
         <div class="input-box mt-5">
@@ -47,80 +62,34 @@
           <i class='bx bx-user'></i>
         </div>
         <div class="input-box">
-          <input type="password" name="user_pass" placeholder="Password" required>
+          <input id="loginPassword" type="password" name="user_pass" placeholder="Password" autocomplete="current-password" required>
           <i class='bx bx-lock-alt'></i>
+        </div>
+        <div class="d-flex align-items-center mb-3" style="gap:.5rem;">
+          <input class="form-check-input mt-0" type="checkbox" id="showLoginPassword">
+          <label class="form-check-label small" for="showLoginPassword">Show password</label>
         </div>
         <button type="submit" class="btn">Login</button>
         <div class="forgot-link">
           <a href="forgot-password.php">Forgot Password?</a>
           <br>
           <?php 
-              if(isset($_SESSION['error']) == false){
+              if($loginError === null){
                   echo '<span></span>';
               } else{
-                  echo '<span class="text-danger font-weight-bold mt-3 mb-2">'. $_SESSION['error'] . '</span>';
+                  echo '<span class="text-danger font-weight-bold mt-3 mb-2">'. htmlspecialchars($loginError, ENT_QUOTES, 'UTF-8') . '</span>';
               }
-              unset($_SESSION['error']);
               session_write_close();
           ?>
         </div>
       </form>
     </div>
 
-    <div class="form-box register">
-      <form action="#">
-        <h1>Sign Up</h1>
-        <div class="input-box">
-          <input id="username" type="text" placeholder="Username" required>
-          <i class='bx bx-user'></i>
-        </div>
-        <div class="input-box">
-          <input id="password" type="password" placeholder="Password" required>
-          <i class='bx bx-lock-alt'></i>
-        </div>
-        <div class="input-box">
-          <input id="firstname" type="text" placeholder="First Name" required>
-          <i class='bx bx-user'></i>
-        </div>
-        <div class="input-box">
-          <input id="lastname" type="text" placeholder="Last Name" required>
-          <i class='bx bx-user'></i>
-        </div>
-        <div class="input-box">
-          <input id="email" type="email" placeholder="Email" required>
-          <i class='bx bx-envelope'></i>
-        </div>
-        <div class="input-box">
-          <select class="form-select" id="department" data-placeholder="Role" required>
-            <option></option>
-            <option value="1">Admin</option>
-            <option value="2">HR</option>
-            <option value="3">Payroll</option>
-            <option value="4">Coordinator</option>
-          </select>
-        </div>
-
-        <div style="display:none" class="input-box" id="client_container">
-          <select class="form-select js-example-basic-multiple" id="client_location"
-            data-placeholder="Choose Client" multiple>
-          </select>
-        </div>
-
-        <button id="signUpBtn" type="button" class="btn">Sign Up</button>
-      </form>
-    </div>
-
     <div class="toggle-box">
       <div class="toggle-panel toggle-left">
         <h1 class="greet">Hello, Welcome!</h1>
-        <p>Don't have an account?</p>
-        <button class="btn register-btn">Sign up</button>
-      </div>
-
-      <div class="toggle-panel toggle-right">
-        <h1 class="greet">Welcome Back!</h1>
-        <p>Already have an account?</p>
-        <button class="btn login-btn">Login</button>
+        <p>Need an account?</p>
+        <p>Contact your HRIS administrator.</p>
       </div>
     </div>
   </div>
@@ -147,41 +116,10 @@
   <!-- Page JS -->
   <!-- <script src="../assets/js/dashboards-analytics.js"></script> -->
   <script>
-    const container = document.querySelector('.container');
-    const registerBtn = document.querySelector('.register-btn');
-    const loginBtn = document.querySelector('.login-btn');
-
-    registerBtn.addEventListener('click', () => {
-      container.classList.add('active');
-    })
-
-    loginBtn.addEventListener('click', () => {
-      container.classList.remove('active');
-    })
-  </script>
-
-  <script src="js/index-03.js"></script>
-  <script>
-    $('#department').select2({
-      theme: "bootstrap-5",
-      width: '100%',
-      placeholder: 'Role'
+    document.getElementById('showLoginPassword').addEventListener('change', function () {
+      const password = document.getElementById('loginPassword');
+      password.type = this.checked ? 'text' : 'password';
     });
-
-    $('#client_location').select2({
-      theme: "bootstrap-5",
-      width: '100%',
-      placeholder: 'Clients',
-      allowClear: true
-    });
-
-    // $('.signup-btn').on('click', function () {
-    //   swal({
-    //     title: "Thank you for signing up!",
-    //     text: "Please wait for the email once your account is active.",
-    //     icon: "success"
-    //   });
-    // });
   </script>
 </body>
 

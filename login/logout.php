@@ -1,5 +1,6 @@
 <?php
-session_start();
+require_once('../includes/session_security.php');
+taascor_start_secure_session();
 require('../config/db_connect.php');
 
 // Log the logout before destroying the session
@@ -11,7 +12,6 @@ try {
     $stmt->execute([$username]);
 } catch (\Throwable $ignored) {}
 
-session_unset();
-session_destroy();
+taascor_destroy_session();
 header('Location: ./');
 exit();

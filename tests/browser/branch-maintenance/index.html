@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Maintenance Save State Browser Harness</title>
+</head>
+<body>
+    <button id="addBtn" type="button">Add</button>
+    <button id="saveBtn" type="button">Save Changes</button>
+    <output id="result">Ready</output>
+
+    <script src="../../../assets/vendor/libs/jquery/jquery.js"></script>
+    <script>
+        $('#addBtn').on('click', function () {
+            $.ajax({
+                url: 'save-response.json',
+                dataType: 'json',
+                beforeSend: function () {
+                    $('#addBtn').html('Saving... <i>spinner</i>').prop('disabled', true);
+                },
+                success: function () {
+                    $('#result').text('success completed');
+                }
+            });
+        });
+
+        $('#saveBtn').on('click', function () {
+            $.ajax({
+                url: 'invalid-response.txt',
+                dataType: 'json',
+                beforeSend: function () {
+                    $('#saveBtn').html('Saving... <i>spinner</i>').prop('disabled', true);
+                },
+                error: function () {
+                    $('#result').text('error completed');
+                }
+            });
+        });
+    </script>
+    <script src="../../../assets/js/hris-global.js?v=20260731b"></script>
+</body>
+</html>

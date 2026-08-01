@@ -31,10 +31,10 @@ class Logs
             $response = true;
 
         } catch (\Throwable $th) {
+            error_log('Logs::insertLog failed: ' . $th->getMessage());
             $response = array(
                 'success' => 0,
-                'message' => $th->getMessage(),
-                'sql' => $sql
+                'message' => 'Unable to save log entry.'
             );
         }
 

@@ -5,11 +5,26 @@ let bankData = [];
 let pnbTotalAmount = 0;
 let pnbTotalCount = 0;
 let pnbPayDay = '';
+let payslipLayout = 'default';
+let payrollReleaseGate = null;
+let payrollRunId = null;
+let payrollLocked = false;
 
 document.getElementById('clearBtn').addEventListener("click", clearFilter);
 document.getElementById('payslipBtn').addEventListener("click", downloadPayslip);
 document.getElementById('postBtn').addEventListener("click", postPayroll);
 document.getElementById('filterBtn').addEventListener("click", getPayrollSummary);
+document.getElementById('payrollRun').addEventListener("change", function () {
+    payrollRunId = Number($(this).val() || 0) || null;
+    payrollReleaseGate = null;
+    $('#postBtn')
+        .prop('disabled', true)
+        .attr('title', 'The selected payroll run must be verified again.');
+    renderPayrollReleaseGateStatus(null, false);
+    if (payrollRunId) {
+        getPayrollSummary();
+    }
+});
 
 $( document ).ready(function() {
     getClientFilter();
@@ -17,10 +32,86 @@ $( document ).ready(function() {
 
 $("#client").change(function() {
     let client_selected = $(this).val();
-    if(client_selected != null){
+    if(client_selected){
         getPayDay(client_selected);
     }    
 });
+
+function parsePayslipRequestError(xhr, fallbackMessage) {
+    let payload = xhr && xhr.responseJSON ? xhr.responseJSON : null;
+    if (!payload && xhr && xhr.responseText) {
+        try {
+            payload = JSON.parse(xhr.responseText);
+        } catch (error) {
+            payload = null;
+        }
+    }
+
+    let status = Number(xhr && xhr.status ? xhr.status : 0);
+    let code = payload && (payload.error_code || payload.code)
+        ? String(payload.error_code || payload.code)
+        : (status === 401 ? 'ACCESS_REQUIRED' : (status === 403 ? 'REQUEST_REFRESH_REQUIRED' : 'CONNECTION_FAILED'));
+
+    return {
+        error_code: code,
+        error: payload && (payload.error || payload.message)
+            ? String(payload.error || payload.message)
+            : fallbackMessage
+    };
+}
+
+function clearPayslipClientLoadError() {
+    $('#payslipClientLoadState')
+        .hide()
+        .empty()
+        .removeAttr('data-hris-actionable data-hris-error-code');
+    $('#client').removeAttr('aria-invalid aria-describedby');
+}
+
+function focusPayslipClientFilter() {
+    let visibleSelection = $('#client').next('.select2').find('.select2-selection').get(0);
+    let target = visibleSelection || document.getElementById('client');
+    if (target && typeof target.focus === 'function') {
+        target.focus();
+    }
+}
+
+function showPayslipClientLoadError(input) {
+    let error = input && input.error
+        ? input
+        : {error_code: 'CONNECTION_FAILED', error: 'Unable to load the client list.'};
+    let $client = $('#client');
+    let host = document.getElementById('payslipClientLoadState');
+
+    $client
+        .prop('disabled', false)
+        .empty()
+        .append(new Option('Client list unavailable - retry below', '', true, true))
+        .attr('aria-invalid', 'true')
+        .attr('aria-describedby', 'payslipClientLoadState')
+        .trigger('change.select2');
+
+    if (host && window.HrisActionableErrors) {
+        window.HrisActionableErrors.render(host, error, {
+            title: 'The Payslip client list could not be loaded',
+            resolution: 'Retry the client list. If it still fails, keep the error reference and contact the application administrator.',
+            secondaryLabel: 'Retry client list',
+            onSecondary: function () {
+                clearPayslipClientLoadError();
+                getClientFilter();
+            }
+        });
+    } else if (host) {
+        host.className = 'alert alert-danger';
+        host.textContent = error.error;
+        host.style.display = '';
+    }
+
+    if (host && typeof host.scrollIntoView === 'function') {
+        host.scrollIntoView({block: 'nearest'});
+    }
+    focusPayslipClientFilter();
+}
 
 function clearFilter() {
     $('#client').val(null).trigger('change');
@@ -31,17 +122,58 @@ function clearFilter() {
     $('#tblDiv').hide();
     $('#tblDiv2').hide();
     payrollDetails = [];
+    payslipLayout = 'default';
+    payrollReleaseGate = null;
+    payrollRunId = null;
+    payrollLocked = false;
+    $('#payrollRun').html('<option value="">Select the approved sealed run</option>');
+    $('#smartRunSelectorRow').hide();
+    $('#payrollReleaseGateStatus').hide().empty();
+    $('#postBtn')
+        .prop('disabled', true)
+        .attr('title', 'Generate payroll and pass the release controls before posting.');
 }
 
 function downloadPayslip() {
     if(payrollDetails.length > 0){
+        if (payrollReleaseGate && payrollReleaseGate.mode === 'smart_run'
+            && !payrollPreviewRunIsSelected(payrollReleaseGate)) {
+            swal.fire({
+                icon: 'warning',
+                title: 'Payslip preview is blocked',
+                text: 'Select and verify the exact governed payroll run before opening its payslips.'
+            });
+            return false;
+        }
         let client_name = payrollDetails[0][0];
         let cut_off = payrollDetails[0][1];
         let pay_day = payrollDetails[0][2];
         let pay_type = payrollDetails[0][5];
         let bank_name = payrollDetails[0][6];
         let location = payrollDetails[0][7];
-        let url = "payslip2.php?cn="+client_name+"&co="+cut_off+"&pd="+pay_day+"&pt="+pay_type+"&bn="+bank_name+"&cl="+location;
+        let params = new URLSearchParams({
+            cn: client_name,
+            co: cut_off,
+            pd: pay_day,
+            pt: pay_type,
+            bn: bank_name,
+            cl: location,
+            layout: payslipLayout
+        });
+        if (payrollRunId) {
+            params.set('run_id', String(payrollRunId));
+        }
+        let url;
+        if (payrollLocked && payrollRunId && payrollReleaseGate && payrollReleaseGate.mode === 'smart_run') {
+            url = "payslip-sealed.php?run_id=" + encodeURIComponent(String(payrollRunId));
+        } else {
+            if (payrollReleaseGate
+                && (payrollReleaseGate.mode === 'smart_run'
+                    || payrollReleaseGate.mode === 'legacy_preview')) {
+                params.set('preview', '1');
+            }
+            url = "payslip2.php?" + params.toString();
+        }
         window.open(url, '_blank')
     }else{
         swal.fire({
@@ -72,6 +204,15 @@ function postPayroll(){
         return false;
     }
 
+    if(!payrollReleaseGateIsReady(payrollReleaseGate)){
+        swal.fire({
+            icon: 'warning',
+            title: 'Payroll release is blocked',
+            text: payrollReleaseGateMessage(payrollReleaseGate)
+        });
+        return false;
+    }
+
     Swal.fire({
         title: 'POST PAYROLL?', 
         html: client + ' - ' + formatDate(pay_day) + '. Click Yes to proceed.',
@@ -85,6 +226,9 @@ function postPayroll(){
             formdata.append("request", "post-payroll");
             formdata.append("client", client);
             formdata.append("pay_day", pay_day);
+            if (payrollRunId) {
+                formdata.append("run_id", String(payrollRunId));
+            }
 
             $.ajax({
                 url: 'controller/PayslipController.php',
@@ -98,6 +242,9 @@ function postPayroll(){
                 },
                 success: function (response) { 
                     if(response.success == 1){
+                        payrollLocked = true;
+                        payrollReleaseGate = response.release_gate || payrollReleaseGate;
+                        $('#postBtn').prop('disabled', true).attr('title', 'Payroll is posted and locked.');
                         swal.fire({
                             icon: 'success',   
                             title: 'Successfully Post Payroll!',  
@@ -131,10 +278,41 @@ function postPayroll(){
 $(document).on("click","#dtrTbl #empPayslip",function() {
     let employee_id = $(this).val();
 
+    if (payrollReleaseGate && payrollReleaseGate.mode === 'smart_run'
+        && !payrollPreviewRunIsSelected(payrollReleaseGate)) {
+        swal.fire({
+            icon: 'warning',
+            title: 'Payslip preview is blocked',
+            text: 'Select and verify the exact governed payroll run before opening this payslip.'
+        });
+        return false;
+    }
+
     let client_name = payrollDetails[0][0];
     let cut_off = payrollDetails[0][1];
     let pay_day = payrollDetails[0][2];
-    let url = "payslip2.php?cn="+client_name+"&co="+cut_off+"&pd="+pay_day+"&ei="+employee_id;
+    let params = new URLSearchParams({
+        cn: client_name,
+        co: cut_off,
+        pd: pay_day,
+        ei: employee_id,
+        layout: payslipLayout
+    });
+    if (payrollRunId) {
+        params.set('run_id', String(payrollRunId));
+    }
+    let url;
+    if (payrollLocked && payrollRunId && payrollReleaseGate && payrollReleaseGate.mode === 'smart_run') {
+        url = "payslip-sealed.php?run_id=" + encodeURIComponent(String(payrollRunId))
+            + "&employee_id=" + encodeURIComponent(String(employee_id));
+    } else {
+        if (payrollReleaseGate
+            && (payrollReleaseGate.mode === 'smart_run'
+                || payrollReleaseGate.mode === 'legacy_preview')) {
+            params.set('preview', '1');
+        }
+        url = "payslip2.php?" + params.toString();
+    }
     window.open(url, '_blank')
 });
 
@@ -152,21 +330,39 @@ function getClientFilter(){
         contentType: false,
         processData: false,
         beforeSend: function( xhr ) {
-            $('#client').attr('disabled',true);
-            $('#client').empty();
+            clearPayslipClientLoadError();
+            $('#client')
+                .prop('disabled', true)
+                .empty()
+                .append(new Option('Loading clients...', '', true, true))
+                .trigger('change.select2');
         },
-        success: function (response) { 
-            $('#client').append(`<option value="" disabled selected>Select Client</option>`);
+        success: function (response) {
+            if (!response || Number(response.success) !== 1 || !Array.isArray(response.data)) {
+                showPayslipClientLoadError(response || {
+                    error_code: 'CONNECTION_FAILED',
+                    error: 'The client list response was incomplete.'
+                });
+                return;
+            }
+
+            clearPayslipClientLoadError();
+            $('#client').empty().append(`<option value="" disabled selected>Select Client</option>`);
 
             response.data.forEach(option => {
                 var option1 = new Option(option.client_name, option.client_name, false, false);
                 $('#client').append(option1);
             });
 
-            $('#client').trigger('change'); 
-            $('#client').attr('disabled',false);
+            $('#client').prop('disabled', false).trigger('change.select2');
 
             getPayType();
+        },
+        error: function (xhr) {
+            showPayslipClientLoadError(parsePayslipRequestError(
+                xhr,
+                'Unable to load the client list. Check your connection and retry.'
+            ));
         }
     });
 }
@@ -374,6 +570,9 @@ function getPayrollSummary() {
     formdata.append("bank_name", bank_name);
     formdata.append("client_location", client_location);
     formdata.append("branch", branch);
+    if (payrollRunId) {
+        formdata.append("run_id", String(payrollRunId));
+    }
 
     $.ajax({
         url: 'controller/PayslipController.php',
@@ -453,6 +652,23 @@ function getPayrollSummary() {
                     }    
                 }
 
+                payslipLayout = response.payslip_layout || 'default';
+                payrollLocked = Boolean(response.locked);
+                payrollReleaseGate = response.release_gate || null;
+                renderPayrollRunCandidates(payrollReleaseGate);
+                let releaseReady = !response.locked && payrollReleaseGateIsReady(payrollReleaseGate);
+                $('#postBtn').prop('disabled', !releaseReady);
+                if(!releaseReady){
+                    $('#postBtn').attr(
+                        'title',
+                        response.locked
+                            ? 'Payroll is posted and locked.'
+                            : payrollReleaseGateMessage(payrollReleaseGate)
+                    );
+                }else{
+                    $('#postBtn').attr('title', 'All release controls passed for the selected authoritative run.');
+                }
+                renderPayrollReleaseGateStatus(payrollReleaseGate, Boolean(response.locked));
                 payrollDetails= [];
                 payrollDetails.push([client,cut_off,pay_day,start_date,end_date,pay_type,bank_name,client_location]);
                 var table = `<table id="dtrTbl" class="dt-complex-header table table-bordered table-sm nowrap"
@@ -506,8 +722,6 @@ function getPayrollSummary() {
                 if(pay_day != null && pay_day != ''){
                     fileName += "_" + pay_day;
                 }
-                console.log(response.data2)
-                console.log(response.columns2)
                 $('#clientTbl').DataTable().destroy();
                 $('#clientTbl').DataTable({
                     data: response.data2,
@@ -568,6 +782,110 @@ function getPayrollSummary() {
             });
         }
     });
+}
+
+function renderPayrollRunCandidates(gate) {
+    if (!gate || gate.mode !== 'smart_run') {
+        payrollRunId = null;
+        $('#smartRunSelectorRow').hide();
+        return;
+    }
+    let candidates = Array.isArray(gate.candidates) ? gate.candidates : [];
+    if (gate.authoritative_run_id) {
+        payrollRunId = Number(gate.authoritative_run_id);
+    }
+    if (candidates.length > 0) {
+        let current = payrollRunId ? String(payrollRunId) : '';
+        let options = '<option value="">Select the approved sealed run</option>';
+        candidates.forEach(function (run) {
+            let value = String(run.id);
+            let selected = value === current ? ' selected' : '';
+            let label = [run.run_uid, run.status, run.release_status].filter(Boolean).join(' · ');
+            options += '<option value="' + value + '"' + selected + '>' + $('<div>').text(label).html() + '</option>';
+        });
+        $('#payrollRun').html(options);
+    }
+    $('#smartRunSelectorRow').show();
+}
+
+function payrollReleaseGateIsReady(gate) {
+    return Boolean(
+        gate
+        && gate.success == 1
+        && gate.gate_status === 'ready'
+        && gate.mode === 'smart_run'
+        && gate.release_attempt === true
+        && gate.release_actor_verified === true
+        && String(gate.release_actor || '').trim() !== ''
+        && Number(gate.authoritative_run_id || 0) > 0
+        && Number(gate.authoritative_run_id) === Number(payrollRunId || 0)
+    );
+}
+
+function payrollPreviewRunIsSelected(gate) {
+    return Boolean(
+        gate
+        && gate.mode === 'smart_run'
+        && Number(gate.authoritative_run_id || 0) > 0
+        && Number(gate.authoritative_run_id) === Number(payrollRunId || 0)
+    );
+}
+
+function payrollReleaseGateMessage(gate) {
+    if (!gate) {
+        return 'Release controls could not be verified. Refresh the payroll scope and try again.';
+    }
+    let labels = {
+        smart_run_schema_required: 'Smart payroll release controls are not installed.',
+        smart_run_schema_incomplete: 'Smart payroll release controls are incomplete.',
+        smart_payroll_enrollment_required: 'This client is not enrolled in the governed payroll workflow.',
+        payroll_scope_empty: 'The selected client and pay date contain no payroll rows.',
+        authoritative_run_selection_required: 'Select an approved, sealed payroll run.',
+        authoritative_smart_run_missing: 'The selected authoritative payroll run is unavailable.',
+        release_actor_missing: 'The authenticated release actor could not be verified.',
+        owner_approval_missing: 'Record an authorized Payroll or Admin approval before releasing payroll.',
+        smart_run_gate_check_failed: 'The release controls could not be verified.'
+    };
+    let blockers = Array.isArray(gate.blocking_reasons) ? gate.blocking_reasons : [];
+    if (!blockers.length) {
+        return gate.error || 'Identity, calculation, reconciliation, payslip, and owner approval controls must pass.';
+    }
+    return blockers.map(function (reason) {
+        if (labels[reason]) {
+            return labels[reason];
+        }
+        let code = String(reason).replace(/^run:[^:]+:/, '');
+        if (labels[code]) {
+            return labels[code];
+        }
+        return code.replace(/_/g, ' ').replace(/\b\w/g, function (letter) {
+            return letter.toUpperCase();
+        });
+    }).join(' ');
+}
+
+function renderPayrollReleaseGateStatus(gate, locked) {
+    let ready = payrollReleaseGateIsReady(gate);
+    let status = $('#payrollReleaseGateStatus');
+    status
+        .removeClass('alert-warning alert-success alert-secondary')
+        .addClass(locked ? 'alert-secondary' : (ready ? 'alert-success' : 'alert-warning'));
+
+    if (locked) {
+        status.text('Posted and locked. Payroll data can no longer be changed for this scope.').show();
+        return;
+    }
+    if (gate && gate.mode === 'legacy_preview' && gate.preview_allowed === true) {
+        status
+            .text('Posting blocked. Payslips may be generated only as UNVERIFIED LEGACY PREVIEW - NON-DISTRIBUTABLE.')
+            .show();
+        return;
+    }
+    if (ready) {
+        status.text('Ready to post. The authoritative run and all release controls passed.').show();
+        return;
+    }
+    status.text('Posting blocked: ' + payrollReleaseGateMessage(gate)).show();
 }
 
 
@@ -876,5 +1194,3 @@ function downloadPNB(data, fileName, pnbPayDay, pnbTotalAmount, pnbTotalCount) {
     // Trigger file download
     saveAs(new Blob([s2ab(wbout)], { type: "application/octet-stream" }), fileName + ".xlsx");
 }
-
-

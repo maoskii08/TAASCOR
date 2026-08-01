@@ -2,11 +2,8 @@ var ExcelImport = function(params){
 
   check_required_libs();
   let X = XLSX;
-  let batch = 0; //the current batch
-  let groups = 0; //total number of batches
-  let maxInAGroup = params.maxInAGroup || 1000;
-  let start = 0; //indicate the start of the slice of the whole data
-  let stop = maxInAGroup; //the stop index for the slice of the whole data for a batch
+  const maxWorkbookRows = Math.min(Number(params.maxWorkbookRows || 1000), 1000);
+  const maxWorkbookBytes = Math.min(Number(params.maxWorkbookBytes || 1048576), 1048576);
   let errorArray = [];
   let columnHeaders = [];
   let data = [];
@@ -19,6 +16,7 @@ var ExcelImport = function(params){
   let tableOutputSelector = params.outputSelector || "#tableOutput";
   let importID = null;
   let date_array = [];
+  let importAuditContext = null;
 
   $(fileChooserSelector).on("change", function () {
 
@@ -28,14 +26,17 @@ var ExcelImport = function(params){
           alerter("No File Selected!");
           return false;
       }
+      if (file.size > maxWorkbookBytes) {
+          alerter('The selected file exceeds the 1 MiB atomic upload limit.');
+          $(fileChooserSelector).val('');
+          return false;
+      }
 
       if(!verifyFile(file)) {
           alerter("Invalid File Selected!");
           document.getElementById('fileUploader').value= null;
           return false;
       }
-
-      _fileName = getFilename(file);
 
       $(tableOutputSelector).html("");
       if($(tableOutputSelector + " #smx_progress-block").length <= 0) {
@@ -79,7 +80,6 @@ var ExcelImport = function(params){
               processWorkbookData(wb);
 
           } catch(e) {
-              console.log(e);
               alerter("Error Reading/Processing Excel File! Please Try again");
               $('#readingFileStatus').html("");
               $('#tableOutput').html("");
@@ -100,7 +100,6 @@ var ExcelImport = function(params){
           $('#dataType').prop('disabled', false);
           $('#fileUploader').prop('disabled', false);
           document.getElementById('fileUploader').value= null;
-          console.log(error);
       };
 
       $("#smx_progress-parsing").html("Reading Data From File . . .");
@@ -116,13 +115,28 @@ var ExcelImport = function(params){
   });
 
   function importButtonClick() {
+      const changeReason = String($('#import-change-reason').val() || '').trim();
+      const evidenceReference = String($('#import-evidence-reference').val() || '').trim();
+      if (payrollDetails.length !== 1) {
+          alerter('Select a client and payroll period before uploading additions.');
+          return false;
+      }
+      if (changeReason.length < 5 || evidenceReference.length < 3) {
+          alerter('Enter a business reason and an approval, ticket, or source-file reference before uploading.');
+          return false;
+      }
+
       columnMap = prepareColumnMap();
 
         if(!columnMap) {
-            error = 1;
             return false;
         }
 
+        importAuditContext = {
+            change_reason: changeReason,
+            evidence_reference: evidenceReference,
+            source_filename: fileName
+        };
         initUpload();
 
         $('#smx_finalizeBt').html('Upload');
@@ -183,17 +197,12 @@ var ExcelImport = function(params){
       try {
           saveAs(new Blob([s2ab(wbout)],{type:"application/octet-stream"}), fname);
       } catch(e) {
-          console.log(e, wbout);
           alerter("Error Saving Excel File Locally");
       }
   }
 
   function setDefaults() {
       X = XLSX;
-      batch = 0;
-      groups = 0;
-      start = 0;
-      stop = maxInAGroup;
   }
 
   function verifyFile(file) {
@@ -305,8 +314,6 @@ var ExcelImport = function(params){
       dynamicTB +=  "</tr>";
 
 
-      console.log("Required: " + columnMatch);
-      console.log("Found: " + counter);
 
       if(counter != columnMatch){
 
@@ -383,18 +390,16 @@ var ExcelImport = function(params){
   }
 
   function initUpload() {
-
-      //remove the headers
-      data.splice(0,1);
-
-      //get the result of the division
-      //if there are remainders, add 1 to the division to care for them
-      groups = parseInt(data.length / maxInAGroup) + ((data.length % maxInAGroup) > 0 ? 1 : 0);
-
+      const workbookRows = data.slice(1);
+      if (workbookRows.length < 1 || workbookRows.length > maxWorkbookRows) {
+          alerter('The workbook must contain between 1 and ' + maxWorkbookRows + ' adjustment rows. No rows were uploaded.');
+          return false;
+      }
+      data = workbookRows;
 
       $(tableOutputSelector).append("<br>" +
           "<div id='smx_upload-block' class='form-group'>" +
-          "<label>Uploading 1 of " + groups + "</label><br>" +
+          "<label>Uploading and validating the complete workbook</label><br>" +
           "<div id='progress' class='progress' style='height:20px;'>"+
           "<div id='smx_progress-upload' class='progress-bar progress-bar-striped bg-warning active' role='progressbar'"+
           "aria-valuenow='0' aria-valuemin='0' aria-valuemax='100' style='width:3%'>"+
@@ -403,10 +408,8 @@ var ExcelImport = function(params){
 
       $(fileChooserSelector + ", " + importTypeSelector + ", #smx_finalizeBt, .smx_col-maps").attr("disabled", "disabled");
 
-      //ignite the chain
-      callPushDataToServer();
-
-      // $('html, body').animate({ scrollTop:  $(tableOutputSelector).offset().top + 50}, 'slow');
+      pushDataToServer(data);
+      return true;
   }
 
   //string to array buffer
@@ -422,7 +425,6 @@ var ExcelImport = function(params){
               "\nhttps://github.com/SheetJS/js-xlsx " +
               "\nhttp://purl.eligrey.com/github/FileSaver.js/blob/master/FileSaver.js" +
               "\n is required!";
-          console.log(error);
           alert(error);
           return false;
       }
@@ -469,143 +471,74 @@ var ExcelImport = function(params){
 
   }
 
-  function callPushDataToServer() {
-
-      if(batch >= groups) {
-          //just in case, but this is handled in update_progress
-          //We are done processing
-          return false;
-      }
-
-      //extract the next batch from the whole data
-//                console.log("Pushing batch " + batch + " to server | start = " + start + " stop = " + stop);
-      let currentData = data.slice(start, stop);
-      setTimeout(pushDataToServer(currentData), 1000);
-
-      //increase the index for the next batch so we know where we are
-      start = stop;
-      stop = stop + maxInAGroup;
-  }
-
   function pushDataToServer(data) {
       let url = $(importTypeSelector).val();
 
-      let payload = $.extend({column_map: JSON.parse(columnMap), data: data}, {payrollDetails: payrollDetails});
+      let payload = $.extend(
+        {
+          upload_mode: 'atomic-v1',
+          expected_row_count: data.length,
+          column_map: JSON.parse(columnMap),
+          data: data,
+          payrollDetails: payrollDetails
+        },
+        importAuditContext || {}
+      );
+      const requestBody = JSON.stringify(payload);
+      if (new Blob([requestBody]).size > maxWorkbookBytes) {
+          alerter('The workbook exceeds the 1 MiB atomic upload limit. No rows were uploaded.');
+          $(fileChooserSelector + ", " + importTypeSelector + ", #smx_finalizeBt, .smx_col-maps").prop("disabled", false);
+          return false;
+      }
 
       $.ajax({
         url: url,
         type: "POST",
         contentType: "application/json;charset=utf-8",
-        data: JSON.stringify(payload),
-        dataType: "json"
+        data: requestBody,
+        dataType: "json",
+        beforeSend: function () {
+          $("#smx_progress-upload").css("width", "50%").html("Saving and recalculating...");
+        }
       })
       .done(function (response) {
         if(response.success){
-          updateProgress();
-        }else{
-          swal.fire({
-            icon: 'error',   
-            title: 'Something went wrong!',                 
-            text: "Error Message: " + response.error.message + ""               
-          }).then(function (result) {
-              window.location.reload()
-          });
-        }
-        
-
-      })
-      .fail(function (error) {
-          alerter("ERROR OCCURRED! " + JSON.stringify(error) + "<br>");
-          $('#readingFileStatus').html("");
-          $('#tableOutput').html("");
-          $('#dataType').prop('disabled', false);
-          $('#fileUploader').prop('disabled', false);
-          document.getElementById('fileUploader').value= null;
-          $('#importModal').modal('hide');
-      });
-
-
-      
-  }
-
- 
-
-  function updateProgress() {
-      //this method is called when the server returned a response
-      //either success or failure
-      //increase the batch
-      batch = batch + 1;
-
-      //calculate the width of the progress bar and percentage done
-      //it is safe to do this here as batch starts from 0
-      let width = parseInt((batch / groups) * 100);
-      $("#smx_progress-upload").css("width", width + "%");
-      $("#smx_upload-block label").html("Uploaded " + batch + " of " + groups);
-      $("#smx_progress-upload").html(width + "%");
-
-      if(batch >= groups) {
-
-          //if the current batch is greater than or equal to the number of available groups
-          //then we are done
+          $("#smx_progress-upload")
+            .css("width", "100%")
+            .removeClass("progress-bar-striped bg-warning active")
+            .addClass("bg-success")
+            .html("100%");
+          $("#smx_upload-block label").html("Complete workbook committed");
           setDefaults();
-          $('html, body').animate({ scrollTop:  $(tableOutputSelector).offset().top + 250}, 'slow');
-
-          var formdata = new FormData();
-          for(let i=0; i < payrollDetails.length; i++) {
-            formdata.append("client_name", payrollDetails[i][0]);
-            formdata.append("cut_off", payrollDetails[i][1]);
-            formdata.append("pay_day", payrollDetails[i][2]);
-          }
-          $.ajax({
-            
-            url: 'controller/ImportController.php',
-            type: "POST",
-            contentType: false,
-            processData: false,
-            data: formdata,
-            dataType: "json",
-            beforeSend: function (xhr) {
-              $("#smx_progress-upload").html('Finalizing..');
-            }
-          })
-          .done(function (response) {
-            $("#smx_progress-upload").removeClass("progress-bar-animated");
-            $("#smx_progress-upload").removeClass("active");
-            
-            if(response.success == 1){
-              $('#importModal').modal('hide');
-              swal.fire({
-                icon: 'success',   
-                title: 'Successfully Uploaded DTR!'           
-              }).then(function (result) {
-                  $('#importModal').modal('hide');
-                  getAdditionalList();
-              });
-              
-            }else{
-                $('#importModal').modal('hide');
-                alerter("ERROR OCCURRED! " + JSON.stringify("Please contact your sytem administrator") + "<br>");
-                $('#readingFileStatus').html("");
-                $('#tableOutput').html("");
-                $('#dataType').prop('disabled', false);
-                $('#fileUploader').prop('disabled', false);
-                document.getElementById('fileUploader').value= null;
-            }
-          })
-          .fail(function (error) {
-              $('#importModal').modal('hide');
-              alerter("ERROR OCCURRED! " + JSON.stringify(error) + "<br>");
-              $('#readingFileStatus').html("");
-              $('#tableOutput').html("");
-              $('#dataType').prop('disabled', false);
-              $('#fileUploader').prop('disabled', false);
-              document.getElementById('fileUploader').value= null;
+          $('#importModal').modal('hide');
+          window.Swal.fire({
+            icon: 'success',
+            title: 'Payroll additions uploaded',
+            html: adjustmentAuditHtml(
+              response,
+              data.length + ' rows were validated, saved, audited, and recalculated as one transaction.'
+            )
+          }).then(function () {
+            getAdditionalList();
           });
-      }
-      else {
-          //call the next guy in the queue
-          callPushDataToServer();
-      }
+        }else{
+          window.Swal.fire({
+            icon: 'error',
+            title: 'Addition upload stopped',
+            text: responseError(response, 'The complete workbook was rejected and no adjustment rows were applied.')
+          });
+          $("#smx_progress-upload").removeClass("bg-warning active").addClass("bg-danger").html("Upload stopped");
+        }
+      })
+      .fail(function (xhr) {
+          window.Swal.fire({
+              icon: 'error',
+              title: 'Addition upload stopped',
+              text: responseError(xhr, 'The workbook could not be confirmed. Validation and recalculation failures are rolled back; if the connection dropped after completion, review the filtered population before retrying.')
+          });
+          $("#smx_progress-upload").removeClass("bg-warning active").addClass("bg-danger").html("Upload stopped");
+      });
+      return true;
   }
 
   function removeDuplicate(value, index, array) {

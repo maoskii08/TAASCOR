@@ -1,27 +1,20 @@
 <?php
 
+declare(strict_types=1);
+
 require_once('../../includes/auth_guard.php');
-auth_require_role([1,3]);
-header("Cache-Control: no-cache, no-store, must-revalidate"); // HTTP 1.1.
-header("Pragma: no-cache"); // HTTP 1.0.
-header("Expires: 0"); // Proxies.
-header('content-type: application/json');
-ini_set('memory_limit', -1);
-require('../../config/db_connect.php');
-require('../model/Import.php');
+auth_require_role([1, 3]);
 
-$model = new Import;
-$model->db = $pdoConn;
-// $model->employee_ident = $_SESSION['taascor_employee_ident']; 
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
+header('Content-Type: application/json');
+http_response_code(410);
 
-$response = [];
-$rawData = json_decode(file_get_contents("php://input"), true);
-$data = $rawData['data'];
-$columnMap = $rawData['column_map'];
-$model->payrollDetails = $rawData['payrollDetails'];
-
-$response = $model->add($data, $columnMap);
-echo json_encode ($response, JSON_PRETTY_PRINT);
-
-
-?>
+echo json_encode([
+    'success' => 0,
+    'code' => 'legacy_dtr_workbook_import_quarantined',
+    'error' => 'The legacy browser-batched DTR upload is unavailable because it can leave a partially committed workbook.',
+    'mutation_blocked' => true,
+    'recovery_route' => '../dtr-format-engine/',
+], JSON_PRETTY_PRINT);

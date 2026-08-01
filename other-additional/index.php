@@ -4,8 +4,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport"
-    content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <title>Other Additional</title>
   <meta name="description" content="" />
@@ -167,25 +166,25 @@
                 <div class="row">
 
                   <div class="col-sm-3">
-                    <label class="form-label fw-bold">Client:</label>
+                    <label class="form-label fw-bold" for="client">Client:</label>
                     <select class="form-select" id="client" data-placeholder="Client">
                     </select>
                   </div>
 
                   <div class="col-sm-2">
-                    <label class="form-label fw-bold">Pay Day:</label>
+                    <label class="form-label fw-bold" for="payDay">Pay Day:</label>
                     <select class="form-select" id="payDay" data-placeholder="Pay Day">
                     </select>
                   </div>
 
                   <div class="col-sm-2">
-                    <label class="form-label fw-bold">Branch:</label>
+                    <label class="form-label fw-bold" for="branch">Branch:</label>
                     <select class="form-select" id="branch" data-placeholder="Branch">
                     </select>
                   </div>
 
                   <div class="col-sm-3">
-                    <label class="form-label fw-bold">Client Location:</label>
+                    <label class="form-label fw-bold" for="clientLocation">Client Location:</label>
                     <select class="form-select" id="clientLocation" data-placeholder="Client Location">
                     </select>
                   </div>
@@ -193,8 +192,8 @@
                   <div class="col-sm-2">
                     <label class="form-label fw-bold">&nbsp;</label>
                     <br>
-                    <button id="filterBtn" class="btn btn-md btn-primary">Filter</button>
-                    <button id="clearBtn" class="btn btn-md btn-secondary">Clear</button>
+                    <button id="filterBtn" type="button" class="btn btn-md btn-primary">Filter</button>
+                    <button id="clearBtn" type="button" class="btn btn-md btn-secondary">Clear</button>
                   </div>
                 </div>
               </div>
@@ -221,23 +220,38 @@
 
     <!-- Modal -->
     <div class="modal fade" id="importModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1"
-      aria-labelledby="staticBackdropLabel" aria-hidden="true">
+      aria-labelledby="importModalLabel" aria-hidden="true">
       <div class="modal-dialog modal-xl modal-dialog-centered">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title" id="exampleModalLabel">Upload Other Additional</h5>
+            <h5 class="modal-title" id="importModalLabel">Upload Other Additional</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body" style="height:600px; overflow-y: scroll; overflow-x: hidden;">
             <div class="form-group" style="display: none;">
-              <label for="accounts">Select Data</label>
+              <label for="dataType">Select Data</label>
               <select class="form-control input-sm" id="dataType">
               <option value="controller/PostImportController.php"></option>
               </select>
             </div>
             <div class="form-group">
-              <label for="inputsm">Select excel file</label>
-              <input type="file" id="fileUploader" class="btn btn-fill btn-default btn-sm" />
+              <label for="fileUploader" class="form-label fw-bold">Select Excel file</label>
+              <input type="file" id="fileUploader" class="form-control" accept=".xlsx,.xls,.csv" />
+            </div>
+            <div class="row mt-3">
+              <div class="col-md-6">
+                <label for="import-change-reason" class="form-label fw-bold">Business reason</label>
+                <input type="text" id="import-change-reason" class="form-control" maxlength="255"
+                  placeholder="Why is this addition required?" required />
+              </div>
+              <div class="col-md-6">
+                <label for="import-evidence-reference" class="form-label fw-bold">Approval or evidence reference</label>
+                <input type="text" id="import-evidence-reference" class="form-control" maxlength="255"
+                  placeholder="Ticket, approval, or source document" required />
+              </div>
+              <div class="col-12">
+                <small class="text-muted">Both fields are required and are recorded in the payroll audit log.</small>
+              </div>
             </div>
             <br>
             <div class="form-group">
@@ -252,11 +266,11 @@
     </div>
 
     <div class="modal fade" id="addModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1"
-      aria-labelledby="staticBackdropLabel" aria-hidden="true">
+      aria-labelledby="addModalLabel" aria-hidden="true">
       <div class="modal-dialog modal-md modal-dialog-centered">
         <div class="modal-content">
           <div class="modal-header">
-            <h5 class="modal-title" id="exampleModalLabel">Add Additional</h5>
+            <h5 class="modal-title" id="addModalLabel">Add Additional</h5>
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body" >
@@ -275,17 +289,19 @@
 
                 <div class="row">
                   <div class="col-sm-4">
-                    <label class="modal-label mt-2">Employee ID:</label>
+                    <label class="modal-label mt-2" for="add-employee-id">Employee:</label>
                   </div>
                   <div class="col-sm-8">
-                  <input type="number" class="form-control" id="add-employee-id">
+                    <select class="form-select" id="add-employee-id" required>
+                      <option value="">Select employee</option>
+                    </select>
                   </div>
                 </div>
 
 
                 <div class="row mt-2">
                   <div class="col-sm-4">
-                    <label class="modal-label mt-2">Employee Name:</label>
+                    <label class="modal-label mt-2" for="add-employee-name">Employee Name:</label>
                   </div>
                   <div class="col-sm-8">
                     <input id="add-employee-name" type="text" class="form-control" disabled>
@@ -295,19 +311,40 @@
 
                 <div class="row mt-2">
                   <div class="col-sm-4">
-                    <label class="modal-label mt-2">Amount:</label>
+                    <label class="modal-label mt-2" for="add-amount">Amount:</label>
                   </div>
                   <div class="col-sm-8">
-                    <input id="add-amount" type="number" class="form-control">
+                    <input id="add-amount" type="number" class="form-control" min="0.01" max="99999999.99"
+                      step="0.01" inputmode="decimal" required>
                   </div>
                 </div>
 
                 <div class="row mt-2">
                   <div class="col-sm-4">
-                    <label class="modal-label mt-2">Type of Addition:</label>
+                    <label class="modal-label mt-2" for="add-type-of-addition">Type of Addition:</label>
                   </div>
                   <div class="col-sm-8">
-                    <input id="add-type-of-addition" type="text" class="form-control">
+                    <input id="add-type-of-addition" type="text" class="form-control" maxlength="50" required>
+                  </div>
+                </div>
+
+                <div class="row mt-2">
+                  <div class="col-sm-4">
+                    <label class="modal-label mt-2" for="add-change-reason">Business Reason:</label>
+                  </div>
+                  <div class="col-sm-8">
+                    <input id="add-change-reason" type="text" class="form-control" maxlength="255"
+                      placeholder="Why is this addition required?" required>
+                  </div>
+                </div>
+
+                <div class="row mt-2">
+                  <div class="col-sm-4">
+                    <label class="modal-label mt-2" for="add-evidence-reference">Approval / Evidence:</label>
+                  </div>
+                  <div class="col-sm-8">
+                    <input id="add-evidence-reference" type="text" class="form-control" maxlength="255"
+                      placeholder="Ticket, approval, or source document" required>
                   </div>
                 </div>
 
@@ -322,8 +359,8 @@
     </div>
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-08.js?v=20260531"></script>
-    <script src="js/app-excel-import-v04.js"></script>
+    <script src="js/index-08.js?v=20260727-p1atomic"></script>
+    <script src="js/app-excel-import-v04.js?v=20260727-p1atomic"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>
@@ -351,12 +388,12 @@
         placeholder: 'Select Client Location'
       });
 
-      // $('#add-employee-id').select2({
-      //   theme: "bootstrap-5",
-      //   width: '100%',
-      //   placeholder: 'Select Employee ID',
-      //   dropdownParent: $('#addModal'),
-      // });
+      $('#add-employee-id').select2({
+        theme: "bootstrap-5",
+        width: '100%',
+        placeholder: 'Select Employee',
+        dropdownParent: $('#addModal'),
+      });
     </script>
 </body>
 

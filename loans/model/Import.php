@@ -10,66 +10,25 @@ class Import{
   public $pay_day = null;
 
   public function spCalculateDTR(){
-        
-    try {
-      $sql = "CALL sp_calculate_dtr(
-                    '{$this->client_name}'
-                    ,'{$this->pay_day}'
-                    ,'{$this->cut_off}'
-              )";
-      $stmt = $this->db->prepare($sql);
-      $stmt->execute();
-
-      $response = array(
-        "success" => 1,
-        "sql" => $sql 
-      );
-
-    } catch (PDOException $e) {
-      $response = array(
-        "success" => 0,
-        "message" => $e->getMessage(), 
-        "sql" => $sql 
-      );
- 
-    }
-
-    return $response;
+    return $this->legacyImporterQuarantine();
   }
 
   public function add(array $data, $columnMap){
-    try {
-      $this->db->beginTransaction();
-
-      $columnMap = $columnMap;
-      foreach ($data as $value) {
-        
-        $insert= $this->insertToDatabase($columnMap, $value); 
-          if($insert['success'] == 0){
-            $this->db->rollBack();
-            $response['success'] = 0;
-            $response['message'] = 'Insert Syntax Error!';
-            $response['error'] = $insert['message'];
-            $response['sql'] = $insert['sql'];
-            return $response;
-            exit();
-          }
-
-      }
-        
-      $this->db->commit();
-      $response['success'] = 1;
-      // $response['sql'] = $insert['sql'];
-      $response['message'] = 'Success';
-    } catch (PDOException $e) {
-      $this->db->rollBack();
-      $response['success'] = 0;
-      $response['error'] = "An error occurred. Please contact your administrator.";
-    }
-    return $response;
+    return $this->legacyImporterQuarantine();
   }
 
-  public function insertToDatabase($columnMap, $column_data){
+  private function legacyImporterQuarantine(): array
+  {
+    return [
+      'success' => 0,
+      'code' => 'legacy_loans_dtr_import_quarantined',
+      'error' => 'This retired Loans importer wrote DTR rows and is permanently quarantined.',
+      'mutation_blocked' => true,
+      'recovery_route' => '../dtr-format-engine/',
+    ];
+  }
+
+  private function insertToDatabase($columnMap, $column_data){
     try {
       $date_now = date("Y-m-d H:i:s", time());
       $columnMap_key = array_keys($columnMap);
@@ -232,15 +191,14 @@ class Import{
 
       $response = array(
         "success" => 1,
-        "sql" => $sql,
         "message" => 'Succesfully Imported',
       );
 
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
+      error_log('Loans Import::insertToDatabase failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "sql" => $sql,
-        "message" => $e->getMessage() 
+        "message" => "Unable to import loan data."
       );
  
     }

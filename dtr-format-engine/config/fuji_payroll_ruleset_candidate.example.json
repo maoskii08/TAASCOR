@@ -1,0 +1,93 @@
+{
+  "candidate_status": "draft_owner_review_required",
+  "client_id": 264,
+  "client_name": "FUJIFILM",
+  "ruleset_key": "fuji-payroll",
+  "ruleset_version": "2026.06-candidate.1",
+  "effective_from": "2026-06-16",
+  "effective_to": null,
+  "evidence_scope": {
+    "dtr_period_start": "2026-06-16",
+    "dtr_period_end": "2026-06-30",
+    "pay_date": "2026-07-13",
+    "earnings_regression": "691 of 691 DTR employees matched the expected basic pay, component-rounded premium earnings, known additions, and gross pay",
+    "approval_warning": "Do not save this candidate as an approved ruleset until Payroll and Finance approve statutory, tax, loan, other-deduction, and payslip-printing semantics."
+  },
+  "rules": [
+    {
+      "rule_type": "earnings",
+      "rule_key": "fuji-daily-and-hourly-basis",
+      "rule_version": "2026.06.1",
+      "snapshot": {
+        "daily_rate_source": "employee approved daily salary",
+        "hourly_rate_formula": "daily_rate / 8",
+        "basic_pay_formula": "round_half_up(daily_rate * days_worked, 2)"
+      }
+    },
+    {
+      "rule_type": "earnings",
+      "rule_key": "fuji-premium-factors",
+      "rule_version": "2026.06.1",
+      "snapshot": {
+        "regular_ot": 1.25,
+        "regular_night_differential": 0.1,
+        "regular_night_differential_ot": 0.125,
+        "regular_holiday": 1.0,
+        "regular_holiday_ot": 2.6,
+        "regular_holiday_night_differential": 0.2,
+        "regular_holiday_night_differential_ot": 0.4,
+        "special_holiday": 1.3,
+        "special_holiday_ot": 1.69,
+        "special_holiday_night_differential": 0.13,
+        "special_holiday_night_differential_ot": 0.169,
+        "rest_day": 1.3,
+        "rest_day_ot": 1.69,
+        "rest_day_night_differential": 0.13,
+        "rest_day_night_differential_ot": 0.169,
+        "rounding": "round each premium component to 2 decimals before summing"
+      }
+    },
+    {
+      "rule_type": "earnings",
+      "rule_key": "fuji-known-additions",
+      "rule_version": "2026.06.1",
+      "snapshot": {
+        "components": [
+          "meal_allowance",
+          "perfect_attendance",
+          "quarterly_attendance",
+          "sil_days * daily_rate"
+        ],
+        "adjustment_precedence": "use aggregate adjustment_amount when non-zero; otherwise sum supported adjustment detail fields"
+      }
+    },
+    {
+      "rule_type": "attendance_deduction",
+      "rule_key": "fuji-late-undertime",
+      "rule_version": "2026.06.1",
+      "snapshot": {
+        "hours_formula": "(late_minutes + undertime_minutes) / 60",
+        "amount_formula": "approved late amount + approved undertime amount",
+        "effective_total_deductions": "printed_total_deductions + late_undertime_amount",
+        "payslip_printing": "printed Total Deductions excludes late and undertime because these are shown separately"
+      }
+    },
+    {
+      "rule_type": "statutory_and_other_deductions",
+      "rule_key": "fuji-owner-approval-blocker",
+      "rule_version": "2026.06.1",
+      "snapshot": {
+        "status": "blocked_pending_owner_approval",
+        "required_decisions": [
+          "SSS source and cutoff treatment",
+          "PhilHealth source and cutoff treatment",
+          "Pag-IBIG source and cutoff treatment",
+          "withholding tax calculation and rounding",
+          "loan balance and deduction cutoff rules",
+          "other deduction source and sign convention"
+        ],
+        "release_behavior": "fail closed until every required decision is versioned, approved, effective-dated, and regression-tested"
+      }
+    }
+  ]
+}

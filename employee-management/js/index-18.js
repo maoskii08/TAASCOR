@@ -3,6 +3,11 @@ let employee_id_array = [];
 let empTbl = null;
 let fileName = "Employee_Management";
 let access_level = $('#access_level').val();
+let dtrIdentityPrefill = null;
+let dtrIdentityPrefillOpened = false;
+let dataIssueHandoff = null;
+let dataIssueHandoffHandled = false;
+let employeeWorkspaceEmbed = new URLSearchParams(window.location.search).get('embed') === '1';
 let file_data = 
         {
             "columns" : ['Employee Ident','Old Employee Ident', 'Payroll Employee ID', 'Full Name', 'Last Name', 'First Name', 'Middle Name', 'Hire Date', 
@@ -58,11 +63,97 @@ function getRequestErrorMessage(response) {
         (message ? '<br><br><small>Details: ' + escapeHtml(message) + '</small>' : '');
 }
 
+function finishEmployeeWorkspace(actionName, employeeId) {
+    if (employeeWorkspaceEmbed && window.parent !== window) {
+        window.parent.postMessage({
+            source: 'taascor-employee-workspace',
+            type: 'saved',
+            action: actionName,
+            employeeId: String(employeeId || '')
+        }, window.location.origin);
+        return;
+    }
+    window.location.reload();
+}
+
+function openWorkspaceTermination() {
+    employee_id = String($('#edit-employee-ident').val() || employee_id || '');
+    $('#term-employee-id').val(employee_id);
+    $('#editEmployeeModal').modal('hide');
+    $('#terminateModal').modal('show');
+}
+
+function removeWorkspaceEmployee() {
+    const employeeId = String($('#edit-employee-ident').val() || employee_id || '');
+    if (!employeeId) {
+        return;
+    }
+    Swal.fire({
+        title: 'Remove this employee from active HRIS?',
+        html: 'The employee record will be retained with today’s removal date and can be restored from Terminated Employees.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Remove employee',
+        cancelButtonText: 'Cancel'
+    }).then(function (result) {
+        if (!result.value) {
+            return;
+        }
+        let formdata = new FormData();
+        formdata.append('request', 'delete-employee');
+        formdata.append('employee_id_array', employeeId);
+        $.ajax({
+            url: 'controller/EmployeeController.php',
+            type: 'POST',
+            data: formdata,
+            dataType: 'json',
+            contentType: false,
+            processData: false
+        }).done(function (response) {
+            if (response.success !== 1) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Unable to Remove Employee',
+                    html: getRequestErrorMessage(response)
+                });
+                return;
+            }
+            Swal.fire({
+                icon: 'success',
+                title: 'Employee Removed From Active HRIS'
+            }).then(function () {
+                finishEmployeeWorkspace('remove', employeeId);
+            });
+        }).fail(function (response) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Unable to Remove Employee',
+                html: getRequestErrorMessage(response)
+            });
+        });
+    });
+}
+
+$(document).on('click', '.modal [data-bs-dismiss="modal"]', function () {
+    if (employeeWorkspaceEmbed && window.parent !== window) {
+        window.parent.postMessage({
+            source: 'taascor-employee-workspace',
+            type: 'close'
+        }, window.location.origin);
+    }
+});
+
 document.getElementById('saveBtn').addEventListener("click", saveChanges);
 document.getElementById('addBtn').addEventListener("click", addEmployee);
 document.getElementById('clearBtn').addEventListener("click", clearFilter);
 document.getElementById('filterBtn').addEventListener("click", getEmployeeList);
 document.getElementById('terminateBtn').addEventListener("click", terminateEmployee);
+if (document.getElementById('workspaceTerminateBtn')) {
+    document.getElementById('workspaceTerminateBtn').addEventListener('click', openWorkspaceTermination);
+}
+if (document.getElementById('workspaceRemoveBtn')) {
+    document.getElementById('workspaceRemoveBtn').addEventListener('click', removeWorkspaceEmployee);
+}
 
 $( document ).ready(function() {
     $.ajaxPrefilter(function(options, originalOptions, xhr) {
@@ -76,9 +167,149 @@ $( document ).ready(function() {
         document.getElementById("addEmployeeBtn").style.display = "block";
     }
     importExcel();
+    prepareDataIssueHandoff();
+    prepareDtrIdentityPrefill();
     getClientFilter();
     getDepartmentFilter();
 });
+
+function prepareDataIssueHandoff() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('from_data_issue') !== '1') {
+        return;
+    }
+
+    const employeeId = String(params.get('employee_id') || '').trim();
+    let actionName = String(params.get('action') || 'edit').trim().toLowerCase();
+    if (!['edit', 'terminate', 'delete'].includes(actionName)) {
+        actionName = 'edit';
+    }
+    if (!employeeId) {
+        return;
+    }
+
+    dataIssueHandoff = {
+        employeeId: employeeId,
+        action: actionName,
+        returnTo: String(params.get('return_to') || '').trim()
+    };
+    $('#employee').val(employeeId);
+}
+
+function clearDataIssueHandoffUrl() {
+    const url = new URL(window.location.href);
+    ['from_data_issue', 'employee_id', 'action', 'return_to'].forEach(function (key) {
+        url.searchParams.delete(key);
+    });
+    window.history.replaceState(
+        {},
+        document.title,
+        url.pathname + (url.search ? url.search : '') + url.hash
+    );
+}
+
+function showDataIssueHandoffError(title, message) {
+    Swal.fire({
+        icon: 'info',
+        title: title,
+        html: escapeHtml(message)
+    });
+}
+
+function handleDataIssueHandoff(tableApi) {
+    if (!dataIssueHandoff || dataIssueHandoffHandled) {
+        return;
+    }
+    dataIssueHandoffHandled = true;
+
+    const employeeId = dataIssueHandoff.employeeId;
+    const actionName = dataIssueHandoff.action;
+    const updateButton = $('#emp_mgmnt_tbl #updateBtn').filter(function () {
+        return String($(this).val()) === employeeId;
+    }).first();
+
+    clearDataIssueHandoffUrl();
+
+    if (!updateButton.length) {
+        showDataIssueHandoffError(
+            'Employee Unavailable',
+            'Employee ' + employeeId + ' is not available in your Employee Management access scope.'
+        );
+        return;
+    }
+
+    if (actionName === 'edit') {
+        updateButton.trigger('click');
+        return;
+    }
+
+    if (actionName === 'terminate') {
+        const terminateButton = updateButton.closest('tr').find('#deleteBtn').first();
+        if (!terminateButton.length) {
+            showDataIssueHandoffError(
+                'Action Unavailable',
+                'You do not have permission to terminate this employee.'
+            );
+            return;
+        }
+        terminateButton.trigger('click');
+        return;
+    }
+
+    if (String(access_level) !== '1') {
+        showDataIssueHandoffError(
+            'Admin Access Required',
+            'Only an Admin can remove an employee from active HRIS records.'
+        );
+        return;
+    }
+
+    tableApi.row(updateButton.closest('tr')).select();
+    bulkDelete();
+}
+
+function prepareDtrIdentityPrefill() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('from_identity_exception') !== '1') {
+        return;
+    }
+    dtrIdentityPrefill = {
+        sourceEmployeeId: String(params.get('source_employee_id') || '').trim(),
+        sourceEmployeeName: String(params.get('source_employee_name') || '').trim(),
+        clientId: String(params.get('client_id') || '').trim(),
+        clientName: String(params.get('client_name') || '').trim()
+    };
+    const nameParts = dtrIdentityPrefill.sourceEmployeeName.split(',');
+    const lastName = String(nameParts[0] || '').trim();
+    const firstName = String(nameParts.slice(1).join(',') || '').trim();
+    $('#add-full-name').val(dtrIdentityPrefill.sourceEmployeeName);
+    $('#add-last-name').val(lastName);
+    $('#add-first-name').val(firstName);
+    $('#add-payroll-employee-ident').val(dtrIdentityPrefill.sourceEmployeeId);
+    $('#identity-prefill-alert')
+        .removeClass('d-none')
+        .html(
+            '<strong>DTR identity handoff</strong><br>'
+            + 'The source name, source employee ID, and client were prefilled from an unresolved DTR exception. '
+            + 'Review every required HRIS field before saving; this page does not auto-create an employee.'
+        );
+    if (!dtrIdentityPrefillOpened) {
+        dtrIdentityPrefillOpened = true;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('addEmployeeModal')).show();
+    }
+}
+
+function applyDtrIdentityClientPrefill() {
+    if (!dtrIdentityPrefill || !dtrIdentityPrefill.clientName) {
+        return;
+    }
+    const hasClient = $('#add-client option').filter(function () {
+        return String($(this).val()) === dtrIdentityPrefill.clientName;
+    }).length > 0;
+    if (hasClient) {
+        $('#add-client').val(dtrIdentityPrefill.clientName).trigger('change');
+    }
+}
 
 $("#branch").change(function() {
     let branch_selected = $(this).val();
@@ -114,6 +345,7 @@ function importExcel() {
         serverColumnNames: file_data['columns'],
         importTypeSelector: "#dataType",
         fileChooserSelector: "#fileUploader",
+        clientSelector: "#import-client",
         outputSelector: "#tableOutput",
         extraData: {
             importID: 0,
@@ -137,8 +369,8 @@ function bulkDelete(){
     }
     // console.log(employee_id_array)
     Swal.fire({
-        title: 'Are you sure you want to delete this employees?', 
-        html: 'Click Yes to proceed.',
+        title: 'Remove the selected employees from active HRIS?',
+        html: 'The employee records will be retained with a removal date and can be restored from Terminated Employees.',
         icon: 'warning',  
         showCancelButton: true,
         confirmButtonText: `Yes`,
@@ -164,9 +396,9 @@ function bulkDelete(){
 
                         Swal.fire({
                             icon: 'success',   
-                            title: 'Successfully Deleted Employees! '        
+                            title: 'Employees Removed From Active HRIS'
                         }).then(function (result) {
-                            window.location.reload()
+                            finishEmployeeWorkspace('remove', employee_id_array.join(','))
                         });
 
                     }else{
@@ -440,11 +672,10 @@ function saveChanges(){
                     icon: 'success',   
                     title: 'Successfully Saved Changes! '        
                 }).then(function (result) {
-                    window.location.reload()
+                    finishEmployeeWorkspace('update', employee_ident)
                 });
 
             }else if(response.success == 2){
-                console.log(response.dup)
                 var dupTxt = "";
                 for(let i=0; i < response.dup.length; i++){
                     dupTxt += response.dup[i] + '<br>';
@@ -638,7 +869,7 @@ function addEmployee(){
                     icon: 'success',   
                     title: 'Successfully Added Employee! '        
                 }).then(function (result) {
-                    window.location.reload()
+                    finishEmployeeWorkspace('create', response.employee_id || '')
                 });
 
             }else if(response.success == 2){
@@ -730,7 +961,7 @@ function terminateEmployee(){
                             icon: 'success',   
                             title: 'Successfully Terminated Employee! '        
                         }).then(function (result) {
-                            window.location.reload()
+                            finishEmployeeWorkspace('terminate', employee_id)
                         });
 
                     }else{
@@ -775,22 +1006,27 @@ function getClientFilter(){
             $('#client').attr('disabled',true);
             $('#add-client').attr('disabled',true);
             $('#edit-client').attr('disabled',true);
+            $('#import-client').attr('disabled',true);
             $('#client').empty();
             $('#add-client').empty();
             $('#edit-client').empty();
+            $('#import-client').empty();
         },
         success: function (response) { 
             $('#client').append(`<option value="" disabled selected>Select Client</option>`);
             $('#add-client').append(`<option value="" disabled selected>Select Client</option>`);
             $('#edit-client').append(`<option value="" disabled selected>Select Client</option>`);
+            $('#import-client').append(`<option value="" disabled selected>Select Client</option>`);
 
             response.data.forEach(option => {
                 var option1 = new Option(option.client_name, option.client_name, false, false);
                 var option2 = new Option(option.client_name, option.client_name, false, false);
                 var option3 = new Option(option.client_name, option.client_name, false, false);
+                var importOption = new Option(option.client_name, option.client_id, false, false);
                 $('#client').append(option1);
                 $('#add-client').append(option2);
                 $('#edit-client').append(option3);
+                $('#import-client').append(importOption);
             });
 
             $('#client').trigger('change'); 
@@ -799,7 +1035,9 @@ function getClientFilter(){
             $('#client').attr('disabled',false);
             $('#add-client').attr('disabled',false);
             $('#edit-client').attr('disabled',false);
+            $('#import-client').attr('disabled',false);
 
+            applyDtrIdentityClientPrefill();
             getBranchFilter();
         }
     }).fail(showEmployeeManagementLoadError);
@@ -1028,6 +1266,7 @@ $("#importModal").on('hidden.bs.modal', function (e) {
     $('#tableOutput').html("");
     $('#dataType').prop('disabled', false);
     $('#fileUploader').prop('disabled', false);
+    $('#import-client').prop('disabled', false).val('');
     document.getElementById('fileUploader').value= null;
 });
 
@@ -1156,6 +1395,16 @@ function getEmployeeList() {
                     }
                 ];
 
+                if(Number(access_level) === 2){
+                    buttonsArray.unshift({
+                        text: '<i class="bx bx-upload"></i> Upload',
+                        className: 'btn btn-sm btn-outline-primary',
+                        action: function () {
+                            importData();
+                        }
+                    });
+                }
+
                 if(access_level == 1){
 
                     buttonsArray = [
@@ -1226,9 +1475,10 @@ function getEmployeeList() {
                         },
                         buttons: buttonsArray
                     });
+                    handleDataIssueHandoff(empTbl);
                 }else{
                     $('#emp_mgmnt_tbl').DataTable().destroy();
-                    $('#emp_mgmnt_tbl').DataTable({
+                    empTbl = $('#emp_mgmnt_tbl').DataTable({
                         data: response.data,
                         responsive: true,
                         lengthChange: true,
@@ -1253,6 +1503,7 @@ function getEmployeeList() {
                         },                
                         buttons: buttonsArray
                     });
+                    handleDataIssueHandoff(empTbl);
                 }
             }
             

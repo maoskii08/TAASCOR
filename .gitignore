@@ -4,6 +4,8 @@
 
 # Local database credentials
 config/mysql-config.php
+dtr-format-engine/config/adapter_approvals.json
+dtr-format-engine/config/adapter_profiles.json
 
 # Runtime and generated artifacts
 *.log
@@ -15,13 +17,22 @@ config/mysql-config.php
 *.tar
 *.tar.gz
 node_modules/
-vendor/
+/vendor/
+__pycache__/
+*.py[cod]
 cache/
 storage/
 tmp/
 temp/
 uploads/
+output/
 outputs/
+audit_reports/
+tools/fuji-reconciliation/private-output/
+
+# Versioned schema migrations are source code.
+!dtr-format-engine/migrations/
+!dtr-format-engine/migrations/*.sql
 
 # Local-only access helpers
 local-dev-admin-session.php

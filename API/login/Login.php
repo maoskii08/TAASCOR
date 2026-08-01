@@ -17,24 +17,17 @@ class LoginClass {
          
         $userInfos = [];
         $login = false;
+        $this->clearAuthenticationSession();
        
         if(isset($this->userNT) && $this->userNT !== ''){ 
             $userInfos = $this->getUser();
             if(count($userInfos) > 0){
-                foreach ($userInfos as $key => $userData) {
-                    $_SESSION['taascor_user_name']              = $userData['employee_user_name'];
-                    $_SESSION['taascor_first_name']             = $userData['first_name'];
-                    $_SESSION['taascor_employee_full_name']     = $userData['employee_full_name'];
-                    $_SESSION['taascor_access_level']           = $userData['access_level'];
-                    $_SESSION['taascor_access_description']     = $userData['access_description'];
-                    $_SESSION['taascor_employee_email']         = $userData['employee_email'];
-                    $_SESSION['taascor_client']                 = $userData['client'];
-                    $user_password                              = $userData['password_hash'];
-                }
+                $userData = $userInfos[0];
+                $userPassword = (string)($userData['password_hash'] ?? '');
 
-                unset($_SESSION['error']);
-            
-                if(isset($_SESSION['taascor_user_name']) && password_verify($this->password, $user_password)){
+                if($userPassword !== '' && password_verify($this->password, $userPassword)){
+                    $this->assignAuthenticationSession($userData);
+                    unset($_SESSION['error']);
                     $login = true;
                 }else{
                     $_SESSION['error'] = 'Incorrect username or password.';
@@ -50,6 +43,34 @@ class LoginClass {
         
         return $login;
 
+    }
+
+    private function clearAuthenticationSession(): void
+    {
+        foreach ([
+            'taascor_user_name',
+            'taascor_first_name',
+            'taascor_employee_full_name',
+            'taascor_access_level',
+            'taascor_access_description',
+            'taascor_employee_email',
+            'taascor_client',
+            'last_activity',
+            'session_start',
+        ] as $key) {
+            unset($_SESSION[$key]);
+        }
+    }
+
+    private function assignAuthenticationSession(array $userData): void
+    {
+        $_SESSION['taascor_user_name'] = $userData['employee_user_name'];
+        $_SESSION['taascor_first_name'] = $userData['first_name'];
+        $_SESSION['taascor_employee_full_name'] = $userData['employee_full_name'];
+        $_SESSION['taascor_access_level'] = $userData['access_level'];
+        $_SESSION['taascor_access_description'] = $userData['access_description'];
+        $_SESSION['taascor_employee_email'] = $userData['employee_email'];
+        $_SESSION['taascor_client'] = $userData['client'];
     }
 
     public function logoutUser(){ 
@@ -73,15 +94,22 @@ class LoginClass {
 
         try {
 
-            $sql = "SELECT employee_user_name FROM taascor_user_access where employee_user_name = :employee_user_name";
+            $sql = "SELECT employee_user_name, employee_email
+                    FROM taascor_user_access
+                    WHERE employee_user_name = :employee_user_name OR employee_email = :employee_email
+                    LIMIT 1";
 
             $stmt = $this->db->prepare($sql);
             $stmt->bindParam(':employee_user_name', $this->username, PDO::PARAM_STR);
+            $stmt->bindParam(':employee_email', $this->email, PDO::PARAM_STR);
             $stmt->execute();
-            $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            if($stmt->rowCount() > 0){
-                $response['success'] = 2;   
+            $existing = $stmt->fetch(PDO::FETCH_ASSOC);
+            if($existing !== false){
+                $response['success'] = 2;
+                $response['error'] = strcasecmp((string)($existing['employee_email'] ?? ''), (string)$this->email) === 0
+                    ? 'That email address is already assigned to an account.'
+                    : 'That username is already in use.';
                 return $response;              
             } else {
                 $date_now = date("Y-m-d H:i:s");
@@ -112,6 +140,7 @@ class LoginClass {
                 $stmt->execute();
 
                 $response['success'] = 1;
+                $response['message'] = 'Account created in Pending status. A separate admin review is required before login.';
                             }  
 
         } catch (\Throwable $th) {
@@ -171,7 +200,8 @@ class LoginClass {
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         } catch (PDOException $e) {
-            $data = $e->getMessage();
+            error_log('LoginClass::getUser failed: ' . $e->getMessage());
+            $data = [];
         }
 
         return $data;

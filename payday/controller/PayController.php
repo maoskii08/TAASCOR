@@ -21,8 +21,6 @@ if($_POST['request'] == 'get-pay-list'){
 
     if(isset($getList['error']) == false){
 
-        $response['sql'] = $getList['sql'];
-
         if(count($getList['data']) > 0){
             foreach ($getList['data'] as $key => $row) {
                 $id = $row['id'];
@@ -39,7 +37,6 @@ if($_POST['request'] == 'get-pay-list'){
         }   
     } else{
         $response['error'] = $getList['error'];
-        $response['sql'] = $getList['sql'];
     }
 
     echo json_encode($response);

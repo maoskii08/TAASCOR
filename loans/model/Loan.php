@@ -31,11 +31,11 @@ class Loan
         try {
             $where ="";
             if($this->employee != ''){
-                $where = " and employee_id = {$this->employee}";
+                $where = " and employee_id = :employee";
             }
 
             if($this->loan_type != 'null'){
-                $where = " and loan_type = '{$this->loan_type}'";
+                $where = " and loan_type = :loan_type";
             }
 
             $sql = "SELECT 
@@ -62,6 +62,12 @@ class Loan
                     $where";
 
             $stmt = $this->db->prepare($sql);
+            if($this->employee != '' && $this->loan_type == 'null'){
+                $stmt->bindParam(':employee', $this->employee, PDO::PARAM_INT);
+            }
+            if($this->loan_type != 'null'){
+                $stmt->bindParam(':loan_type', $this->loan_type, PDO::PARAM_STR);
+            }
             $stmt->execute();
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
             

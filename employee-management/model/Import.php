@@ -6,30 +6,45 @@ class Import{
   public $import_id = null;
   public $date_list = ['hire date','separation date','birthday', 'client date'];
 
+  public function getClientById(int $clientId): ?array
+  {
+    $stmt = $this->db->prepare(
+      "SELECT client_id, client_name
+       FROM taascor_client
+       WHERE client_id = :client_id
+       LIMIT 1"
+    );
+    $stmt->bindValue(':client_id', $clientId, PDO::PARAM_INT);
+    $stmt->execute();
+    $client = $stmt->fetch(PDO::FETCH_ASSOC);
 
-  public function spTransferEmployeeData(){
-        
-    try {
-      $sql = "CALL sp_transfer_employee_data({$this->import_id})";
-      $stmt = $this->db->prepare($sql);
-      $stmt->execute();
+    return is_array($client) ? $client : null;
+  }
 
-      $response = array(
-        "success" => 1,
-        "sql" => $sql 
-      );
+  public function countStagedRows(): int
+  {
+    $stmt = $this->db->prepare(
+      "SELECT COUNT(*) FROM employee_tmp WHERE import_id = :import_id"
+    );
+    $stmt->bindValue(':import_id', (string)$this->import_id, PDO::PARAM_STR);
+    $stmt->execute();
+    return (int)$stmt->fetchColumn();
+  }
 
-    } catch (PDOException $e) {
-      $response = array(
-        "success" => 0,
-        "message" => $e->getMessage(), 
-        "sql" => $sql 
-      );
- 
-    }
 
-    return $response;
-}
+  public function blockedEmployeeTransferResponse(): array
+  {
+    return [
+      'success' => 0,
+      'error_code' => 'employee_transfer_v2_required',
+      'message' => 'Employee import finalization is temporarily blocked because the installed transfer routine can commit outside the application rollback boundary. No employee master data was changed, and the staged upload was preserved.',
+      'next_action' => 'An administrator must install and approve a transaction-neutral employee transfer v2 contract before this import can be finalized. You can continue using Employee Management for viewing and manual employee actions.',
+      'route' => 'employee-management',
+      'route_label' => 'Return to Employee Management',
+      'staging_preserved' => true,
+      'import_id' => (string)$this->import_id,
+    ];
+  }
 
   public function validate(){
     
@@ -164,14 +179,12 @@ class Import{
 
       if(count($success) == 0){
         $response['success'] = 1;
-        // $response['sql'] = $dupEmployee['sql'];
       } else {
           $response['success'] = 0;
           $response['errors'] = $this->errors;
           $response['error_message'] = $this->error_message;
           $response['error_count'] = $this->error_count;
           $response['validation'] = $success;       
-          // $response['sql'] = $dupEmployee['sql'];  
       }
     } catch (PDOException $e) {
       $response['success'] = 0;
@@ -269,7 +282,6 @@ class Import{
             $response['success'] = 0;
             $response['message'] = 'Insert Syntax Error!';
             $response['error'] = $insert['message'];
-            $response['sql'] = $insert['sql'];
             return $response;
             exit();
           }
@@ -277,11 +289,13 @@ class Import{
         
       $this->db->commit();
       $response['success'] = 1;
-      // $response['sql'] = $insert['sql'];
       $response['message'] = 'Success';
       $response['import_id'] = $this->import_id;
-    } catch (PDOException $e) {
-      $this->db->rollBack();
+    } catch (Throwable $e) {
+      if (method_exists($this->db, 'inTransaction') && $this->db->inTransaction()) {
+        $this->db->rollBack();
+      }
+      error_log('Import::add failed: ' . $e->getMessage());
       $response['success'] = 0;
       $response['error'] = "An error occurred. Please contact your administrator.";
     }
@@ -464,15 +478,14 @@ class Import{
 
       $response = array(
         "success" => 1,
-        "sql" => $sql,
         "message" => 'Succesfully Imported',
       );
 
     } catch (PDOException $e) {
+      error_log('Import::insertToDatabase failed: ' . $e->getMessage());
       $response = array(
         "success" => 0,
-        "sql" => $sql,
-        "message" => $e->getMessage() 
+        "message" => "Unable to import employee data."
       );
  
     }
@@ -1213,25 +1226,18 @@ class Import{
           );
 
       } catch (PDOException $e) {
+          error_log('Import::deleteInvalid failed: ' . $e->getMessage());
           $response['success'] = 0;
-                    $response['message'] = $e->getMessage();
+                    $response['message'] = "Unable to delete invalid employee import rows.";
       }
 
       return $response;
   }
 
   public function generateId(){
-    $uniqueRefLength = 8;
     $uniqueRefFound = 1;
-    $possibleChars = "0123456789";
     while ($uniqueRefFound == 1) {
-        $uniqueRef = "";
-        $i = 0;
-        while ($i <= $uniqueRefLength) {
-            $char = substr($possibleChars, mt_rand(0, strlen($possibleChars)-1), 1);
-            $uniqueRef .= $char;
-            $i++;
-        }
+      $uniqueRef = (string)random_int(100000000, 999999999);
         
       $sql = "SELECT import_id
                 FROM employee_tmp

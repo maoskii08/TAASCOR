@@ -79,7 +79,6 @@ var ExcelImport = function(params){
               processWorkbookData(wb);
 
           } catch(e) {
-              console.log(e);
               alerter("Error Reading/Processing Excel File! Please Try again");
               $('#readingFileStatus').html("");
               $('#tableOutput').html("");
@@ -100,7 +99,6 @@ var ExcelImport = function(params){
           $('#dataType').prop('disabled', false);
           $('#fileUploader').prop('disabled', false);
           document.getElementById('fileUploader').value= null;
-          console.log(error);
       };
 
       $("#smx_progress-parsing").html("Reading Data From File . . .");
@@ -183,7 +181,6 @@ var ExcelImport = function(params){
       try {
           saveAs(new Blob([s2ab(wbout)],{type:"application/octet-stream"}), fname);
       } catch(e) {
-          console.log(e, wbout);
           alerter("Error Saving Excel File Locally");
       }
   }
@@ -305,8 +302,6 @@ var ExcelImport = function(params){
       dynamicTB +=  "</tr>";
 
 
-      console.log("Required: " + columnMatch);
-      console.log("Found: " + counter);
 
       if(counter != columnMatch){
 
@@ -422,7 +417,6 @@ var ExcelImport = function(params){
               "\nhttps://github.com/SheetJS/js-xlsx " +
               "\nhttp://purl.eligrey.com/github/FileSaver.js/blob/master/FileSaver.js" +
               "\n is required!";
-          console.log(error);
           alert(error);
           return false;
       }
@@ -498,6 +492,7 @@ var ExcelImport = function(params){
         url: url,
         type: "POST",
         contentType: "application/json;charset=utf-8",
+        headers: { "X-CSRF-Token": $('#csrf_token').val() },
         data: JSON.stringify(payload),
         dataType: "json"
       })
@@ -553,11 +548,12 @@ var ExcelImport = function(params){
           $('html, body').animate({ scrollTop:  $(tableOutputSelector).offset().top + 250}, 'slow');
           
           var formdata = new FormData();
-          for(let i=0; i < payrollDetails.length; i++) {
-            formdata.append("client_name", payrollDetails[i][0]);
-            formdata.append("cut_off", payrollDetails[i][1]);
-            formdata.append("pay_day", payrollDetails[i][2]);
-          }
+           for(let i=0; i < payrollDetails.length; i++) {
+             formdata.append("client_name", payrollDetails[i][0]);
+             formdata.append("cut_off", payrollDetails[i][1]);
+             formdata.append("pay_day", payrollDetails[i][2]);
+           }
+          formdata.append("csrf_token", $('#csrf_token').val());
           $.ajax({
             
             url: 'controller/ImportController.php',
@@ -573,7 +569,6 @@ var ExcelImport = function(params){
           .done(function (response) {
             $("#smx_progress-upload").removeClass("progress-bar-animated");
             $("#smx_progress-upload").removeClass("active");
-            console.log(response);
             if(response.success == 1){
               $('#importModal').modal('hide');
               swal.fire({

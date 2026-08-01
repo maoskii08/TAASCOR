@@ -30,9 +30,9 @@ class Loan
                         INNER JOIN employee_loans c 
                             ON a.employee_id = c.employee_id 
                             AND a.loan_type = c.loan_type
-                        WHERE MONTH(a.pay_day) = MONTH('{$this->loan_date}') 
-                            AND YEAR(a.pay_day) = YEAR('{$this->loan_date}')
-                            AND a.loan_type = '{$this->loan_type}'
+                        WHERE MONTH(a.pay_day) = MONTH(:loan_date_month)
+                            AND YEAR(a.pay_day) = YEAR(:loan_date_year)
+                            AND a.loan_type = :loan_type
                     )
 
                     SELECT 
@@ -45,6 +45,9 @@ class Loan
                     GROUP BY employee_id, loan_date";
 
             $stmt = $this->db->prepare($sql);
+            $stmt->bindParam(':loan_date_month', $this->loan_date, PDO::PARAM_STR);
+            $stmt->bindParam(':loan_date_year', $this->loan_date, PDO::PARAM_STR);
+            $stmt->bindParam(':loan_type', $this->loan_type, PDO::PARAM_STR);
             $stmt->execute();
             $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
             

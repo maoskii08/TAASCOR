@@ -1,4 +1,5 @@
 <?php
+require_once(__DIR__ . '/../../legacy-route-disabled.php');
 /**
  * ForgotPasswordController.php
  * Handles: forgot-password (send email) + reset-password (set new pass)

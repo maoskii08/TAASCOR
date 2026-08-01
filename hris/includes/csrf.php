@@ -6,7 +6,7 @@
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-/** Generate (or retrieve) the session CSRF token. */
+/** Generate or retrieve the session CSRF token. */
 function csrf_token(): string {
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -14,26 +14,24 @@ function csrf_token(): string {
     return $_SESSION['csrf_token'];
 }
 
-/**
- * Validate the CSRF token from either:
- *  - POST body  ($_POST['csrf_token'])
- *  - X-CSRF-Token request header (for AJAX calls using setRequestHeader)
- * Kills the request with 403 JSON if invalid.
- */
+/** Validate the CSRF token for unsafe requests. */
 function csrf_validate(): void {
-    $sessionToken = $_SESSION['csrf_token'] ?? '';
-    if (!$sessionToken) return; // first load — token not yet generated, skip
+    $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+    if (!in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
+        return;
+    }
 
+    $sessionToken = $_SESSION['csrf_token'] ?? '';
     $submitted = $_POST['csrf_token']
         ?? $_SERVER['HTTP_X_CSRF_TOKEN']
         ?? '';
 
-    if (!hash_equals($sessionToken, $submitted)) {
+    if (!$sessionToken || !$submitted || !hash_equals($sessionToken, $submitted)) {
         http_response_code(403);
         header('Content-Type: application/json');
         echo json_encode([
             'success' => 0,
-            'error'   => 'Invalid request. Please refresh the page and try again.'
+            'error' => 'Invalid request. Please refresh the page and try again.'
         ]);
         exit();
     }

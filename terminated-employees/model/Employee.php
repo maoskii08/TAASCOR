@@ -37,6 +37,7 @@ class Employee
             }
 
             $sql = "SELECT a.employee_id
+                            ,a.status as lifecycle_status
                             ,annual_leaves
                             ,first_name
                             ,last_name
@@ -87,7 +88,7 @@ class Employee
                         left join taascor_department g on a.department_id = g.department_id
                         left join taascor_position h on a.position_id = h.position_id
                         left join taascor_client_location i on a.client_location_id = i.location_id
-                        where status = 'Terminated' $where
+                        where status in ('Terminated', 'Removed') $where
                     ";
 
             $stmt = $this->db->prepare($sql);
@@ -120,6 +121,7 @@ class Employee
         try {
             $sql = "UPDATE employee_list set 
                         status = 'Active'
+                        ,separation_date = NULL
                     where employee_id = :employee";
 
             $stmt = $this->db->prepare($sql);

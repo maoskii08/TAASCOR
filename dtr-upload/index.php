@@ -1,3 +1,7 @@
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,3]);
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
   data-assets-path="../../assets/" data-template="vertical-menu-template-free" data-style="light">
@@ -227,39 +231,6 @@
       <div class="layout-overlay layout-menu-toggle"></div>
     </div>
     <!-- / Layout wrapper -->
-
-    <!-- Modal -->
-    <div class="modal fade" id="importModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1"
-      aria-labelledby="staticBackdropLabel" aria-hidden="true">
-      <div class="modal-dialog modal-xl modal-dialog-centered">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h5 class="modal-title" id="exampleModalLabel">Upload DTR</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-          </div>
-          <div class="modal-body" style="height:600px; overflow-y: scroll; overflow-x: hidden;">
-            <div class="form-group" style="display: none;">
-              <label for="accounts">Select Data</label>
-              <select class="form-control input-sm" id="dataType">
-              <option value="controller/PostImportController.php"></option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label for="inputsm">Select excel file</label>
-              <input type="file" id="fileUploader" class="btn btn-fill btn-default btn-sm" />
-            </div>
-            <br>
-            <div class="form-group">
-              <div id="readingFileStatus"></div>
-              <div class="table-responsive">
-                  <div id="tableOutput"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
 
     <!-- Modal -->
     <div class="modal fade" id="editDTRModal" data-bs-keyboard="false" tabindex="-1"
@@ -644,6 +615,42 @@
                   </div>
                 </div>
 
+                <div class="row mt-5">
+                  <div class="col-sm-12">
+                    <div class="divider text-start">
+                      <div class="divider-text">
+                        <small class="text-uppercase fw-bold">Change governance</small>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="row mt-2">
+                  <div class="col-sm-4">
+                    <label class="modal-label mt-2" for="dtr-change-reason">
+                      Business reason: <span class="text-danger font-weight-bold">*</span>
+                    </label>
+                  </div>
+                  <div class="col-sm-8">
+                    <textarea id="dtr-change-reason" class="form-control" rows="3" maxlength="500"
+                      placeholder="Explain why the reviewed DTR value must change"></textarea>
+                    <small class="text-muted">10–500 characters. This is retained in the payroll audit.</small>
+                  </div>
+                </div>
+
+                <div class="row mt-3">
+                  <div class="col-sm-4">
+                    <label class="modal-label mt-2" for="dtr-change-evidence">
+                      Evidence reference: <span class="text-danger font-weight-bold">*</span>
+                    </label>
+                  </div>
+                  <div class="col-sm-8">
+                    <input id="dtr-change-evidence" type="text" class="form-control" maxlength="500"
+                      placeholder="Approval ID, ticket, source file, or controlled record">
+                    <small class="text-muted">Use a traceable reference; do not enter passwords or secrets.</small>
+                  </div>
+                </div>
+
                 </div>
             </div>
           </div>
@@ -715,8 +722,7 @@
     </div>
 
     <?Php require("../includes/footer.php") ;?>
-    <script src="js/index-13.js?v=20260531"></script>
-    <script src="js/app-excel-import-v05.js"></script>
+    <script src="js/index-13.js?v=20260727-phase0-p0c"></script>
     <?Php require("../includes/custom-footer.php") ;?>
 
     <script>

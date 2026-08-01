@@ -1,3 +1,8 @@
+<?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,2,3,4]);
+$employeeWorkspaceEmbed = ($_GET['embed'] ?? '') === '1';
+?>
 <!doctype html>
 <html lang="en" class="light-style layout-menu-fixed layout-compact" dir="ltr" data-theme="theme-default"
   data-assets-path="../../assets/" data-template="vertical-menu-template-free" data-style="light">
@@ -69,6 +74,28 @@
       color: #343a40;
     }
 
+    body.employee-workspace-embed { background: #fff; overflow: hidden; }
+    body.employee-workspace-embed .layout-wrapper > .layout-container { display: none !important; }
+    body.employee-workspace-embed .modal-backdrop { display: none !important; }
+    body.employee-workspace-embed .modal { background: #fff; }
+    body.employee-workspace-embed .modal-dialog {
+      max-width: 100%;
+      width: 100%;
+      height: 100%;
+      min-height: 100%;
+      margin: 0;
+    }
+    body.employee-workspace-embed .modal-content {
+      min-height: 100%;
+      border: 0;
+      border-radius: 0;
+      box-shadow: none;
+    }
+    body.employee-workspace-embed .modal-body {
+      height: auto !important;
+      flex: 1 1 auto;
+    }
+
     @media screen and (max-width: 500px) {
       div.dt-top-container {
         grid-template-columns: none;
@@ -92,7 +119,7 @@
   </style>
 </head>
 
-<body>
+<body class="<?php echo $employeeWorkspaceEmbed ? 'employee-workspace-embed' : ''; ?>">
   <!-- Layout wrapper -->
   <div class="layout-wrapper layout-content-navbar">
     <div class="layout-container">
@@ -290,8 +317,19 @@
               </select>
             </div>
             <div class="form-group">
+              <label for="import-client">Import client scope</label>
+              <select class="form-select" id="import-client" data-placeholder="Select client" required>
+                <option value="" disabled selected>Select Client</option>
+              </select>
+              <div class="form-text">
+                Every workbook row must match this client. The scope is bound to a server-issued import reference.
+              </div>
+            </div>
+            <div class="form-group mt-3">
               <label for="inputsm">Select excel file</label>
-              <input type="file" id="fileUploader" class="btn btn-fill btn-default btn-sm" />
+              <input type="file" id="fileUploader" class="btn btn-fill btn-default btn-sm"
+                accept=".xlsx,.xls,.csv" />
+              <div class="form-text">Maximum 1,000 rows and 5 MiB per workbook.</div>
             </div>
             <br>
             <div class="form-group">
@@ -315,6 +353,7 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body" style="height:600px; overflow-y: scroll; overflow-x: hidden;">
+            <div class="alert alert-info d-none" id="identity-prefill-alert" role="alert"></div>
             <div class="row mt-n3">
               <div class="col-sm-6">
                 <!--Employee Information-->
@@ -1176,6 +1215,18 @@
             </div>
           </div>
           <div class="modal-footer">
+            <?php if ($employeeWorkspaceEmbed): ?>
+            <div class="me-auto d-flex gap-2">
+              <button id="workspaceTerminateBtn" type="button" class="btn btn-outline-warning">
+                <i class="bx bx-user-x me-1" aria-hidden="true"></i>Terminate
+              </button>
+              <?php if (auth_level() === 1): ?>
+              <button id="workspaceRemoveBtn" type="button" class="btn btn-outline-danger">
+                <i class="bx bx-trash me-1" aria-hidden="true"></i>Remove from HRIS
+              </button>
+              <?php endif; ?>
+            </div>
+            <?php endif; ?>
             <button id="saveBtn" type="button" class="btn btn-md btn-primary">Save Changes</button>
           </div>
         </div>
@@ -1187,9 +1238,9 @@
     <script src="https://cdn.datatables.net/select/3.0.0/js/dataTables.select.js"></script>
     <script src="https://cdn.datatables.net/select/3.0.0/js/select.dataTables.js"></script>
 
-    <script src="js/index-18.js?v=20260624a"></script>
-    <script src="js/app-excel-import-v04.js?v=20260531"></script>
-    <?Php require("../includes/custom-footer.php") ;?>
+    <script src="js/index-18.js?v=20260727d"></script>
+    <script src="js/app-excel-import-v04.js?v=20260727b"></script>
+    <?php if (!$employeeWorkspaceEmbed) require("../includes/custom-footer.php"); ?>
 
     <script>
       // $(document).ready(function () {

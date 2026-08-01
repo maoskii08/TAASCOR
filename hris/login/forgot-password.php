@@ -1,3 +1,4 @@
+<?php require_once(__DIR__ . '/../legacy-route-disabled.php'); ?>
 <!doctype html>
 <html lang="en">
 <head>

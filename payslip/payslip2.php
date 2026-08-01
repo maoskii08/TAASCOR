@@ -1,13 +1,67 @@
 <?php
+require_once('../includes/auth_guard.php');
+auth_require_role([1,3]);
 require('../assets/vendor/libs/fpdf/fpdf.php');
 require('../config/db_connect.php');
+require_once(__DIR__ . '/fuji-reference-rules.php');
+require_once(__DIR__ . '/report-filter-rules.php');
+require_once(__DIR__ . '/preview-binding-rules.php');
+require_once(__DIR__ . '/../dtr-format-engine/model/PayrollLegacyScopeHasher.php');
+
+function pdf_text($value): string
+{
+    $text = (string)($value ?? '');
+    if (function_exists('mb_convert_encoding')) {
+        return mb_convert_encoding($text, 'ISO-8859-1', 'UTF-8');
+    }
+    if (function_exists('iconv')) {
+        $converted = iconv('UTF-8', 'ISO-8859-1//TRANSLIT//IGNORE', $text);
+        if ($converted !== false) {
+            return $converted;
+        }
+    }
+    return $text;
+}
 
 class PDF extends FPDF
 {
+    public bool $fujiReferenceLayout = false;
+    public bool $preReleasePreview = false;
+    public string $previewWatermark = '';
+
+    public function Header()
+    {
+        if (!$this->preReleasePreview || $this->previewWatermark === '') {
+            return;
+        }
+        $this->SetXY(3, 1);
+        $this->SetFont('Arial', 'B', 8);
+        $this->SetTextColor(150, 15, 55);
+        $this->SetFillColor(255, 225, 235);
+        $this->Cell(204, 6, $this->previewWatermark, 1, 0, 'C', true);
+        $this->SetTextColor(0, 0, 0);
+    }
+
+    public function Footer()
+    {
+        if (!$this->preReleasePreview || $this->previewWatermark === '') {
+            return;
+        }
+        $this->SetY(-8);
+        $this->SetFont('Arial', 'B', 7);
+        $this->SetTextColor(170, 25, 80);
+        $this->Cell(0, 4, $this->previewWatermark, 0, 0, 'C');
+        $this->SetTextColor(0, 0, 0);
+    }
+
     function PayslipTable($y_position, $data = array(), $otherAdditional = array(), $otherDeduction = array(), $loanList = array())
     {   
         $employee_id = $data['employee_id'];
-        $employee_full_name = utf8_decode($data['employee_full_name']);
+        $employee_full_name = pdf_text(
+            $this->fujiReferenceLayout
+                ? strtoupper((string)($data['employee_reference_name'] ?? $data['employee_full_name']))
+                : $data['employee_full_name']
+        );
         $client_name = $data['client_name'];
         $location_name = $data['location_name'];
         $pay_day = date("m/d/Y", strtotime($data['pay_day']));
@@ -174,14 +228,35 @@ class PDF extends FPDF
         
         $overall_deduction = $other_deductions + $lates + $undertime + $employee_sss + $employee_philhealth + $employee_pagibig + $employee_tax
                                             + $company_loan + $pagibig_loan + $pagibig_calamity + $sss_loan + $sss_calamity;
+        $printed_total_deduction = $this->fujiReferenceLayout
+            ? fuji_reference_printed_total_deductions($overall_deduction, $lates, $undertime)
+            : $overall_deduction;
+
+        $formatValue = function ($value, int $decimals = 2) {
+            if ($this->fujiReferenceLayout && abs((float)$value) < 0.0000001) {
+                return ' ';
+            }
+            return number_format((float)$value, $decimals);
+        };
 
         $this->SetXY(3, $y_position);
-        $this->SetFont('Arial', 'B', 9);
-        $this->MultiCell(110, 5, "TAASCOR MANAGEMENT & GENERAL SERVICES CORPORATION\nClient: $client_name\nEmployee Name: $employee_full_name", 1, 'L', false);
+        if ($this->fujiReferenceLayout) {
+            $branchName = stripos($client_name, 'Fujifilm') !== false
+                ? 'FUJIFILM OPTICS PHILS., CORP'
+                : strtoupper($client_name);
+            $this->SetFont('Arial', 'B', 8);
+            $this->MultiCell(100, 7.5, "TAASCOR MANAGEMENT & GENERAL SERVICES CORPORATION\nEmployee Name   $employee_full_name", 1, 'L', false);
+            $this->SetFont('Arial', '', 7);
+            $this->SetXY(103, $y_position);
+            $this->MultiCell(100, 5, "Payroll Period   $start_date      To   $end_date        Pay Date   $pay_day\nBranch             $branchName\nDepartment       NO DEPARTMENT", 1, 'L', false);
+        } else {
+            $this->SetFont('Arial', 'B', 9);
+            $this->MultiCell(110, 5, "TAASCOR MANAGEMENT & GENERAL SERVICES CORPORATION\nClient: $client_name\nEmployee Name: $employee_full_name", 1, 'L', false);
 
-        $this->SetFont('Arial', '', 8);
-        $this->SetXY(113, $y_position);
-        $this->MultiCell(90, 3.75, "Pay Date $pay_day\nPayroll Period $start_date To $end_date\nClient Location: $location_name\n ", 1, 'L', false);    
+            $this->SetFont('Arial', '', 8);
+            $this->SetXY(113, $y_position);
+            $this->MultiCell(90, 3.75, "Pay Date $pay_day\nPayroll Period $start_date To $end_date\nClient Location: $location_name\n ", 1, 'L', false);
+        }
 
         $y_table_start = $y_position + 15;
         $this->SetFont('Arial', '', 7);
@@ -197,17 +272,27 @@ class PDF extends FPDF
         $this->SetXY(3, $y_table_start + 3.5);
         $this->MultiCell(30, 3.5, "BASIC RATE\nBASIC\nNON-TAX ALLOW\nTAXABLE ALLOW\nOTHER EARNINGS\nECOLA / RETRO\nVL\nSL", 1, 'L',false);
         $this->SetXY(33, $y_table_start + 3.5);
-        $this->MultiCell(15, 3.5, "DAILY\n".number_format($daily_worked,2)."\n \n \n \n \n".number_format($vacation_leave_hrs,2)."\n".number_format($sick_leave_hrs,2), 1, 'C',false);
+        $this->MultiCell(15, 3.5, "DAILY\n".number_format($daily_worked,2)."\n \n \n \n \n".$formatValue($vacation_leave_hrs)."\n".$formatValue($sick_leave_hrs), 1, 'C',false);
         $this->SetXY(48, $y_table_start + 3.5);
-        $this->MultiCell(20, 3.5, number_format($daily_salary,2)."\n".number_format($basic_pay,2)."\n \n \n".number_format($other_earnings,2).
-                                    "\n \n".number_format($vacation_leave,2)."\n".number_format($sick_leave,2), 1, 'R',false);
+        $this->MultiCell(20, 3.5, number_format($daily_salary,2)."\n".number_format($basic_pay,2)."\n \n \n".$formatValue($other_earnings).
+                                    "\n \n".$formatValue($vacation_leave)."\n".$formatValue($sick_leave), 1, 'R',false);
         $this->SetXY(68, $y_table_start + 3.5);
-        $this->MultiCell(30, 3.5, "SSS\nPHILHEALTH\nPAGIBIG\nTAX\nLATE\nUNDERTIME\n \n ", 1, 'L',false);
+        $deductionLabels = $this->fujiReferenceLayout
+            ? "SSS\nPHILHEALTH\nPAGIBIG\nWTAX (tax code Z)\nABSENT\nLATE/UNDERTIME\n \n "
+            : "SSS\nPHILHEALTH\nPAGIBIG\nTAX\nLATE\nUNDERTIME\n \n ";
+        $this->MultiCell(30, 3.5, $deductionLabels, 1, 'L',false);
         $this->SetXY(98, $y_table_start + 3.5);
-        $this->MultiCell(15, 3.5, " \n \n \n \n".number_format($lates_hrs,2)."\n".number_format($undertime_hrs,2)."\n \n ", 1, 'C',false);
+        $deductionBasis = $this->fujiReferenceLayout
+            ? " \n \n \n \n0.00\n".number_format(fuji_reference_late_undertime_hours($lates_hrs, $undertime_hrs), 4)."\n \n "
+            : " \n \n \n \n".number_format($lates_hrs,2)."\n".number_format($undertime_hrs,2)."\n \n ";
+        $this->MultiCell(15, 3.5, $deductionBasis, 1, 'C',false);
         $this->SetXY(113, $y_table_start + 3.5);
-        $this->MultiCell(35, 3.5, number_format($employee_sss,2)."\n".number_format($employee_philhealth,2)."\n".number_format($employee_pagibig,2).
-                            "\n".number_format($employee_tax,2)."\n".number_format($lates,2)."\n".number_format($undertime,2)."\n \n ", 1, 'R',false);
+        $deductionAmounts = $this->fujiReferenceLayout
+            ? $formatValue($employee_sss)."\n".$formatValue($employee_philhealth)."\n".$formatValue($employee_pagibig).
+                "\n".$formatValue($employee_tax)."\n \n".$formatValue(fuji_reference_late_undertime_amount($lates, $undertime))."\n \n "
+            : $formatValue($employee_sss)."\n".$formatValue($employee_philhealth)."\n".$formatValue($employee_pagibig).
+                "\n".$formatValue($employee_tax)."\n".$formatValue($lates)."\n".$formatValue($undertime)."\n \n ";
+        $this->MultiCell(35, 3.5, $deductionAmounts, 1, 'R',false);
         $this->SetXY(148, $y_table_start + 3.5);
         $this->MultiCell(40, 3.5, "{$addTxt[0]}\n{$addTxt[1]}\n{$addTxt[2]}\n{$addTxt[3]}\n{$addTxt[4]}\n{$addTxt[5]}", 1, 'L',false); //total other additional
         $this->SetXY(188, $y_table_start + 3.5);
@@ -215,7 +300,7 @@ class PDF extends FPDF
 
         $this->SetXY(148, $y_table_start + 24.5);
         $this->Cell(40, 3.5, 'TOTAL OTHER ADDITIONS', 1, 0, 'L');
-        $this->Cell(15, 3.5, number_format($other_earnings,2), 1, 1, 'R');
+        $this->Cell(15, 3.5, $formatValue($other_earnings), 1, 1, 'R');
         $this->SetXY(148, $y_table_start + 28);
         $this->Cell(55, 3.5, 'BREAKDOWN OF OTHER DEDUCTIONS', 1, 0, 'C');
 
@@ -237,12 +322,12 @@ class PDF extends FPDF
 
         $this->SetXY(148, $y_table_start + 52.5);
         $this->Cell(40, 3.5, 'TOTAL OTHER DEDUCTIONS', 1, 0, 'L');
-        $this->Cell(15, 3.5, number_format($other_deductions,2), 1, 1, 'R');
+        $this->Cell(15, 3.5, $formatValue($other_deductions), 1, 1, 'R');
         $this->SetXY(148, $y_table_start + 56);
         $this->SetFont('Arial', 'B', 8);
         $this->MultiCell(40, 4, "TOTAL DEDUCTIONS\nNET PAY", 1, 'L');
         $this->SetXY(188, $y_table_start + 56);
-        $this->MultiCell(15, 4, number_format($overall_deduction,2)."\n".number_format($net_pay,2), 1, 'R');
+        $this->MultiCell(15, 4, number_format($printed_total_deduction,2)."\n".number_format($net_pay,2), 1, 'R');
 
         $this->SetXY(148, $y_table_start + 64);
         $this->SetFont('Arial', '', 7);
@@ -254,10 +339,10 @@ class PDF extends FPDF
         $this->MultiCell(20, 3.5, "REGULAR OT\nREGULAR HOL\nSPECIAL HOL\nDAY OFF\nDO/REG. HOL\nDO/SPC HOL.", 1, 'L');
 
         $this->SetXY(3, $y_table_start + 56);
-        $this->Cell(20, 3.5, 'Total OT', 1, 0, 'L');
-        $this->Cell(10, 3.5, number_format($total_reg_hrs,2), 1, 0, 'C');
-        $this->Cell(10, 3.5, number_format($total_ot_hrs,2), 1, 0, 'C');
-        $this->Cell(10, 3.5, number_format($total_nd_hrs,2), 1, 0, 'C');
+        $this->Cell(20, 3.5, $this->fujiReferenceLayout ? 'TOTAL OT' : 'Total OT', 1, 0, 'L');
+        $this->Cell(10, 3.5, $formatValue($total_reg_hrs), 1, 0, 'C');
+        $this->Cell(10, 3.5, $formatValue($total_ot_hrs), 1, 0, 'C');
+        $this->Cell(10, 3.5, $formatValue($total_nd_hrs), 1, 0, 'C');
         $this->Cell(15, 3.5, number_format($total_ot,2), 1, 0, 'R');
         $this->SetXY(3, $y_table_start + 59.5);
         $this->SetFont('Arial', 'B', 8);
@@ -268,28 +353,38 @@ class PDF extends FPDF
         // //OT
         $this->SetFont('Arial', '', 7);
         $this->SetXY(23, $y_table_start + 35);
-        $this->MultiCell(10, 3.5, " \n".number_format($regular_holiday_hrs,2)."\n".number_format($special_holiday_hrs,2)."\n".number_format($rest_day_hrs,2)."\n".
-                            number_format($rest_day_regular_holiday_hrs,2)."\n".number_format($rest_day_special_holiday_hrs,2), 1, 'C',false); //reg
+        $this->MultiCell(10, 3.5, " \n".$formatValue($regular_holiday_hrs)."\n".$formatValue($special_holiday_hrs)."\n".$formatValue($rest_day_hrs)."\n".
+                            $formatValue($rest_day_regular_holiday_hrs)."\n".$formatValue($rest_day_special_holiday_hrs), 1, 'C',false); //reg
         $this->SetXY(33, $y_table_start + 35);
-        $this->MultiCell(10, 3.5, number_format($overtime_hrs,2)."\n".number_format($regular_holiday_ot_hrs,2)."\n".number_format($special_holiday_ot_hrs,2)."\n".
-                            number_format($rest_day_ot_hrs,2)."\n".number_format($rest_day_regular_holiday_ot_hrs,2)."\n".number_format($rest_day_special_holiday_ot_hrs,2), 1, 'C',false); //ot
+        $this->MultiCell(10, 3.5, $formatValue($overtime_hrs)."\n".$formatValue($regular_holiday_ot_hrs)."\n".$formatValue($special_holiday_ot_hrs)."\n".
+                            $formatValue($rest_day_ot_hrs)."\n".$formatValue($rest_day_regular_holiday_ot_hrs)."\n".$formatValue($rest_day_special_holiday_ot_hrs), 1, 'C',false); //ot
         $this->SetXY(43, $y_table_start + 35);
-        $this->MultiCell(10, 3.5, number_format($night_diff_hrs,2)."\n".number_format($regular_holiday_night_diff_hrs,2)."\n".number_format($special_holiday_night_diff_hrs,2)."\n".
-                            number_format($rest_day_night_diff_hrs,2)."\n".number_format($rest_day_regular_holiday_night_diff_hrs,2)."\n".number_format($rest_day_special_holiday_night_diff_hrs,2), 1, 'C',false); //nd
+        $this->MultiCell(10, 3.5, $formatValue($night_diff_hrs)."\n".$formatValue($regular_holiday_night_diff_hrs)."\n".$formatValue($special_holiday_night_diff_hrs)."\n".
+                            $formatValue($rest_day_night_diff_hrs)."\n".$formatValue($rest_day_regular_holiday_night_diff_hrs)."\n".$formatValue($rest_day_special_holiday_night_diff_hrs), 1, 'C',false); //nd
         $this->SetXY(53, $y_table_start + 35);
-        $this->MultiCell(15, 3.5, number_format($total_reg,2)."\n".number_format($total_reg_hol,2)."\n".number_format($total_special_hol,2)."\n".number_format($total_rest_day,2)."\n".
-                            number_format($total_rest_day_regular_hol,2)."\n".number_format($total_rest_day_special_hol,2), 1, 'R',false); //total
+        $this->MultiCell(15, 3.5, $formatValue($total_reg)."\n".$formatValue($total_reg_hol)."\n".$formatValue($total_special_hol)."\n".$formatValue($total_rest_day)."\n".
+                            $formatValue($total_rest_day_regular_hol)."\n".$formatValue($total_rest_day_special_hol), 1, 'R',false); //total
         
         $this->SetXY(68, $y_table_start + 35);
-        $this->MultiCell(30, 3.5, "SSS\nSSS CALAMITY\nPAGIBIG\nPAGIBIG CALAMITY\nCOMPANY\n \n \n \n \n ", 1, 'L',false);
+        $loanLabels = $this->fujiReferenceLayout
+            ? "SSS\nPAGIBIG\nCOMPANY\n \n \n \n \n \n \n "
+            : "SSS\nSSS CALAMITY\nPAGIBIG\nPAGIBIG CALAMITY\nCOMPANY\n \n \n \n \n ";
+        $this->MultiCell(30, 3.5, $loanLabels, 1, 'L',false);
         $this->SetXY(98, $y_table_start + 35);
-        $this->MultiCell(15, 3.5, "$sss_pay_num\n$sss_calamity_pay_num\n$pagibig_pay_num\n$pagibig_calamity_pay_num\n$company_pay_num\n \n \n \n \n ", 1, 'C',false);
+        $loanPayNumbers = $this->fujiReferenceLayout
+            ? $formatValue($sss_pay_num, 0)."\n".$formatValue($pagibig_pay_num, 0)."\n".$formatValue($company_pay_num, 0)."\n \n \n \n \n \n \n "
+            : "$sss_pay_num\n$sss_calamity_pay_num\n$pagibig_pay_num\n$pagibig_calamity_pay_num\n$company_pay_num\n \n \n \n \n ";
+        $this->MultiCell(15, 3.5, $loanPayNumbers, 1, 'C',false);
         $this->SetXY(113, $y_table_start + 35);
-        $this->MultiCell(17.5, 3.5, number_format($sss_loan,2)."\n".number_format($sss_calamity,2)."\n".number_format($pagibig_loan,2)."\n".number_format($pagibig_calamity,2)."\n".
-                            number_format($company_loan,2)."\n \n \n \n \n ", 1, 'R',false);
+        $loanAmounts = $this->fujiReferenceLayout
+            ? $formatValue($sss_loan)."\n".$formatValue($pagibig_loan)."\n".$formatValue($company_loan)."\n \n \n \n \n \n \n "
+            : number_format($sss_loan,2)."\n".number_format($sss_calamity,2)."\n".number_format($pagibig_loan,2)."\n".number_format($pagibig_calamity,2)."\n".number_format($company_loan,2)."\n \n \n \n \n ";
+        $this->MultiCell(17.5, 3.5, $loanAmounts, 1, 'R',false);
         $this->SetXY(130.5, $y_table_start + 35);
-        $this->MultiCell(17.5, 3.5, number_format($sss_balance,2)."\n".number_format($sss_calamity_balance,2)."\n".number_format($pagibig_balance,2)."\n".number_format($pagibig_calamity_balance,2)."\n".
-                            number_format($company_balance,2)."\n \n \n \n \n ", 1, 'R', false);
+        $loanBalances = $this->fujiReferenceLayout
+            ? $formatValue($sss_balance)."\n".$formatValue($pagibig_balance)."\n".$formatValue($company_balance)."\n \n \n \n \n \n \n "
+            : number_format($sss_balance,2)."\n".number_format($sss_calamity_balance,2)."\n".number_format($pagibig_balance,2)."\n".number_format($pagibig_calamity_balance,2)."\n".number_format($company_balance,2)."\n \n \n \n \n ";
+        $this->MultiCell(17.5, 3.5, $loanBalances, 1, 'R', false);
         $this->SetFont('Arial', '', 12);
         $this->SetXY(3, $y_table_start + 71);                    
         $this->Cell(200, 3, '---------------------------------------------------------------------------------------------------------------------------------------------', 0, 0, 'L');           
@@ -297,16 +392,141 @@ class PDF extends FPDF
 }
 
 $db = $pdoConn;
-$clientName = $_GET["cn"];
-$cutOff = $_GET["co"];
-$payDay = $_GET["pd"];
+$clientName = $_GET["cn"] ?? '';
+$cutOff = $_GET["co"] ?? '';
+$payDay = $_GET["pd"] ?? '';
+$clientConfig = $db->prepare('SELECT client_id FROM taascor_client WHERE client_name = :client LIMIT 1');
+$clientConfig->execute([':client' => $clientName]);
+$configuredClientId = $clientConfig->fetchColumn();
+$layout = payslip_layout_for_client(
+    $clientName,
+    $configuredClientId === false ? null : (int)$configuredClientId
+);
 
 $bankName = 'null';
 $payType = 'null';
 $clientLocation = 'null';
 
 $where = "";
+$mainWhere = "";
 $join = "";
+$filterParams = [];
+
+try {
+    $employee_ident = payslip_positive_int_filter($_GET, 'ei');
+    $clientLocationId = payslip_positive_int_filter($_GET, 'cl');
+    $selectedRunId = payslip_positive_int_filter($_GET, 'run_id');
+} catch (InvalidArgumentException $error) {
+    http_response_code(400);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Invalid payslip filter.');
+}
+
+$serverRequiresPreview = false;
+$legacyPreviewMode = false;
+try {
+    $settingsTable = $db->prepare("\n        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = 'payroll_import_client_settings'
+    ");
+    $settingsTable->execute();
+    $settingsSchemaExists = (int)$settingsTable->fetchColumn() > 0;
+    if (!$settingsSchemaExists || $configuredClientId === false) {
+        $legacyPreviewMode = true;
+    } else {
+        $enrollment = $db->prepare("\n            SELECT smart_flow_enabled
+            FROM payroll_import_client_settings
+            WHERE client_id = :client_id
+        ");
+        $enrollment->execute([':client_id' => (int)$configuredClientId]);
+        $smartFlowEnabled = (int)$enrollment->fetchColumn() === 1;
+        if (!$smartFlowEnabled) {
+            $legacyPreviewMode = true;
+        } else {
+            $serverRequiresPreview = true;
+            $released = $db->prepare("\n                SELECT l.run_id
+                FROM payroll_import_release_locks l
+                INNER JOIN payroll_import_runs r ON r.id = l.run_id
+                WHERE l.client_name = :client_name
+                  AND l.pay_day = :pay_day
+                  AND r.status = 'released'
+                  AND r.release_status = 'released'
+                LIMIT 1
+            ");
+            $released->execute([':client_name' => $clientName, ':pay_day' => $payDay]);
+            $releasedRunId = (int)$released->fetchColumn();
+
+            $selectedRun = [];
+            if ($selectedRunId !== null) {
+                $runQuery = $db->prepare("\n                    SELECT r.id, r.status, r.release_status, r.pay_date,
+                           c.client_name,
+                           b.run_id AS binding_run_id,
+                           b.client_name AS binding_client_name,
+                           b.pay_day AS binding_pay_day,
+                           b.live_snapshot_hash AS binding_snapshot_hash,
+                           b.employee_count AS binding_employee_count,
+                           b.payroll_row_count AS binding_payroll_row_count,
+                           b.snapshot_payload AS binding_snapshot_payload,
+                           (
+                               SELECT COUNT(*)
+                               FROM payroll_import_release_checks rc
+                               WHERE rc.run_id = r.id
+                                 AND rc.check_code = 'LEGACY_SCOPE_BINDING'
+                                 AND rc.is_blocking = 1
+                                 AND rc.check_status = 'passed'
+                           ) AS legacy_binding_check_passed
+                    FROM payroll_import_runs r
+                    INNER JOIN taascor_client c ON c.client_id = r.client_id
+                    LEFT JOIN payroll_import_legacy_scope_bindings b ON b.run_id = r.id
+                    WHERE r.id = :run_id
+                      AND r.client_id = :client_id
+                      AND c.client_name = :client_name
+                      AND r.pay_date = :pay_day
+                    LIMIT 1
+                ");
+                $runQuery->execute([
+                    ':run_id' => $selectedRunId,
+                    ':client_id' => (int)$configuredClientId,
+                    ':client_name' => $clientName,
+                    ':pay_day' => $payDay,
+                ]);
+                $selectedRun = $runQuery->fetch(PDO::FETCH_ASSOC) ?: [];
+            }
+
+            $liveScope = [];
+            if ($releasedRunId <= 0 && count($selectedRun) > 0) {
+                $liveScope = (new PayrollLegacyScopeHasher($db))->snapshot($clientName, $payDay);
+            }
+            $previewDecision = payslip_preview_binding_policy([
+                'selected_run_id' => $selectedRunId,
+                'released_run_id' => $releasedRunId,
+                'client_name' => $clientName,
+                'pay_day' => $payDay,
+                'run' => $selectedRun,
+                'live' => $liveScope,
+            ]);
+            if (($previewDecision['success'] ?? 0) !== 1) {
+                http_response_code(409);
+                header('Content-Type: text/plain; charset=utf-8');
+                exit('Payslip preview blocked: ' . (string)($previewDecision['error'] ?? 'The selected run could not be verified.'));
+            }
+
+            if (($previewDecision['mode'] ?? '') === 'sealed_artifact') {
+                $sealedQuery = ['run_id' => (int)$previewDecision['authoritative_run_id']];
+                if ($employee_ident !== null) {
+                    $sealedQuery['employee_id'] = $employee_ident;
+                }
+                header('Location: payslip-sealed.php?' . http_build_query($sealedQuery), true, 302);
+                exit();
+            }
+        }
+    }
+} catch (Throwable $error) {
+    error_log('Unable to determine sealed payslip route: ' . $error->getMessage());
+    http_response_code(503);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit('Payslip release status could not be verified. Please try again.');
+}
 
 if(isset($_GET['pt']) == true){
     $payType = $_GET["pt"];
@@ -316,26 +536,41 @@ if(isset($_GET['bn']) == true){
     $bankName = $_GET["bn"];
 }
 
-if(isset($_GET['cl']) == true){
-    $clientLocation = $_GET["cl"];
+if($clientLocationId !== null){
+    $clientLocation = (string)$clientLocationId;
 }
 
-if(isset($_GET['ei']) == true){
-    $employee_ident = $_GET['ei'];
-    $where .= " AND a.employee_id = {$employee_ident}";
+if($employee_ident !== null){
+    $where .= " AND a.employee_id = :employee_id";
+    $mainWhere .= " AND a.employee_id = :employee_id";
+    $filterParams[':employee_id'] = $employee_ident;
 }
 
 if($payType != 'null'){
-    $where .= " AND pay_type = '{$payType}'";
+    $where .= " AND s.pay_type = :pay_type";
+    $mainWhere .= " AND s.pay_type = :pay_type";
+    $filterParams[':pay_type'] = $payType;
 }
 
 if($bankName != 'null'){
-    $where .= " AND bank_name = '{$bankName}'";
+    $where .= " AND s.bank_name = :bank_name";
+    $mainWhere .= " AND s.bank_name = :bank_name";
+    $filterParams[':bank_name'] = $bankName;
 }
 
 if($clientLocation != 'null'){
     $join .= "INNER JOIN employee_list b ON a.employee_id = b.employee_id";
-    $where .= " AND client_location_id = {$clientLocation}";
+    $where .= " AND b.client_location_id = :client_location_id";
+    $mainWhere .= " AND c.client_location_id = :client_location_id";
+    $filterParams[':client_location_id'] = $clientLocationId;
+}
+
+function bind_report_params(PDOStatement $stmt, array $params): void
+{
+    foreach ($params as $name => $value) {
+        $type = is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR;
+        $stmt->bindValue($name, $value, $type);
+    }
 }
 
 $otherAdditional = [];
@@ -354,9 +589,11 @@ $sql = "SELECT
             type_of_addition";
 
 $stmt = $db->prepare($sql);
-$stmt->bindParam(':client', $clientName, PDO::PARAM_STR);
-$stmt->bindParam(':cut_off', $cutOff, PDO::PARAM_STR);
-$stmt->bindParam(':pay_day', $payDay, PDO::PARAM_STR);
+bind_report_params($stmt, array_merge([
+    ':client' => $clientName,
+    ':cut_off' => $cutOff,
+    ':pay_day' => $payDay
+], $filterParams));
 $stmt->execute();
 $additional = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -385,9 +622,11 @@ $sql = "SELECT
             type_of_deduction";
 
 $stmt = $db->prepare($sql);
-$stmt->bindParam(':client', $clientName, PDO::PARAM_STR);
-$stmt->bindParam(':cut_off', $cutOff, PDO::PARAM_STR);
-$stmt->bindParam(':pay_day', $payDay, PDO::PARAM_STR);
+bind_report_params($stmt, array_merge([
+    ':client' => $clientName,
+    ':cut_off' => $cutOff,
+    ':pay_day' => $payDay
+], $filterParams));
 $stmt->execute();
 $deduction = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -414,8 +653,10 @@ $sql = "SELECT a.employee_id,
             $where";
 
 $stmt = $db->prepare($sql);
-$stmt->bindParam(':client', $clientName, PDO::PARAM_STR);
-$stmt->bindParam(':pay_day', $payDay, PDO::PARAM_STR);
+bind_report_params($stmt, array_merge([
+    ':client' => $clientName,
+    ':pay_day' => $payDay
+], $filterParams));
 $stmt->execute();
 $loan = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -430,7 +671,8 @@ if($stmt->rowCount() > 0){
 
 $sql = "SELECT 
             a.employee_id,
-            CONCAT(first_name, ' ', last_name) AS employee_full_name,    
+            CONCAT(first_name, ' ', last_name) AS employee_full_name,
+            CONCAT(last_name, ', ', first_name) AS employee_reference_name,
             a.start_date,
             a.end_date,
             a.pay_day,
@@ -523,22 +765,32 @@ $sql = "SELECT
         where a.client_name = :client
             and a.cut_off = :cut_off
             and a.pay_day = :pay_day
-            $where";
+            $mainWhere";
 
 $stmt = $db->prepare($sql);
-$stmt->bindParam(':client', $clientName, PDO::PARAM_STR);
-$stmt->bindParam(':cut_off', $cutOff, PDO::PARAM_STR);
-$stmt->bindParam(':pay_day', $payDay, PDO::PARAM_STR);
+bind_report_params($stmt, array_merge([
+    ':client' => $clientName,
+    ':cut_off' => $cutOff,
+    ':pay_day' => $payDay
+], $filterParams));
 $stmt->execute();
 $data = $stmt->fetchAll(PDO::FETCH_ASSOC);
 $counter = 0;
 
+$watermarkPolicy = payslip_dynamic_watermark_policy(
+    $legacyPreviewMode,
+    $serverRequiresPreview,
+    (string)($_GET['preview'] ?? '') === '1'
+);
 $pdf = new PDF();
+$pdf->fujiReferenceLayout = $layout === 'fuji-reference';
+$pdf->preReleasePreview = (bool)$watermarkPolicy['required'];
+$pdf->previewWatermark = (string)$watermarkPolicy['label'];
 $pdf->AddPage();
 
 $tables_per_page = 3; 
 $table_spacing = 90;  
-$y_start = 3; 
+$y_start = $pdf->preReleasePreview ? 9 : 3;
 
 foreach ($data as $row) {
     $y_position = $y_start + ($counter % $tables_per_page) * $table_spacing; 
