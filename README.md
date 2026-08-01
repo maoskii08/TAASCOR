@@ -19,6 +19,25 @@ php -S 127.0.0.1:8797 -t .
 
 The local credential file, database exports, logs, uploaded payroll data, and local authentication helpers are intentionally excluded from source control.
 
+## TASCA Gemini AI
+
+TASCA sends authenticated chat requests to the same-origin `tasca-ai/chat.php`
+gateway. The gateway keeps the Gemini credential server-side, requires CSRF and
+one of the five authenticated HRIS roles, rate-limits requests, blocks likely
+private identifiers before generation, and supplies only curated Page Guide
+context. Gemini cannot access or modify HRIS records.
+
+Configure either `GEMINI_API_KEY` in the PHP runtime or point
+`TAASCOR_GEMINI_ENV_FILE` to a private environment file outside the web root.
+`GEMINI_MODEL` defaults to `gemini-3.5-flash`. The ignored local
+`.env.gemini` file may contain the private file path, but never commit an API key.
+Set `GEMINI_CA_BUNDLE` only when the local PHP runtime does not already have a
+trusted CA bundle configured. TLS certificate verification must remain enabled.
+See `.env.example` for the blank settings.
+
+Users must not enter employee names, IDs, contact details, compensation values,
+banking information, credentials, or other private records into TASCA.
+
 ## Multi-client DTR identity gate
 
 The DTR Format Engine stages client DTR files through approved, versioned adapters,

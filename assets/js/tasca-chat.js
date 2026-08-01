@@ -2,7 +2,8 @@
     'use strict';
 
     var allowedRoles = ['1', '2', '3', '4', '5'];
-  var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801c';
+    var aiEndpoint = '../tasca-ai/chat.php';
+    var brandMarkPath = '../assets/img/svg/tasca-bot-logo.svg?v=20260801c';
     var registry = window.HrisHelpGuides || {};
     var guides = registry.guides || {};
     var maxMessages = 30;
@@ -13,7 +14,8 @@
         lastFocused: null,
         lastQuestion: '',
         messages: [],
-        responseTimer: null,
+        abortController: null,
+        requestTimeout: null,
         mobileInert: false,
         previousAppAriaHidden: null
     };
@@ -103,20 +105,24 @@
     function welcomeMessage() {
         if (accessLevel() === '4') {
             return assistantMessage(
-                'Hi, I am TASCA. I can provide a read-only overview of ' + currentGuide.title + '. Use only controls visible to your Coordinator role. I cannot view or change HRIS records.',
+                'Hi, I am TASCA, powered by Gemini AI. I can provide a read-only overview of ' + currentGuide.title + '. Use only controls visible to your Coordinator role. I cannot view or change HRIS records.',
                 {source: currentGuide.title}
             );
         }
         return assistantMessage(
-            'Hi, I am TASCA. I can provide a read-only overview of ' + currentGuide.title + ' or open the existing Page Guide. Use only controls visible to your role. I cannot view or change HRIS records.',
+            'Hi, I am TASCA, powered by Gemini AI. I can provide a read-only overview of ' + currentGuide.title + ' or open the existing Page Guide. Use only controls visible to your role. I cannot view or change HRIS records.',
             {source: currentGuide.title}
         );
     }
 
     function resetMessages() {
-        if (state.responseTimer !== null) {
-            window.clearTimeout(state.responseTimer);
-            state.responseTimer = null;
+        if (state.abortController) {
+            state.abortController.abort();
+            state.abortController = null;
+        }
+        if (state.requestTimeout !== null) {
+            window.clearTimeout(state.requestTimeout);
+            state.requestTimeout = null;
         }
         setBusy(false);
         state.messages = [welcomeMessage()];
@@ -250,6 +256,15 @@
         return hasAny(question, requestWords) && hasAny(question, sensitiveWords);
     }
 
+    function containsSensitiveInput(question) {
+        var compact = String(question || '').replace(/[\s()-]+/g, '');
+        return asksForPrivateRecord(normalise(question))
+            || /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(question)
+            || /(?:\+?63|0)?9\d{9}\b/.test(compact)
+            || /(?:PHP|₱|salary|wage|pay)\s*[:=]?\s*[0-9][0-9,.]*/i.test(question)
+            || /\b\d{8,}\b/.test(String(question || '').replace(/[\s-]+/g, ''));
+    }
+
     function safePageContext() {
         if (accessLevel() === '4') {
             return {
@@ -336,6 +351,70 @@
         );
     }
 
+    function csrfToken() {
+        var input = document.getElementById('csrf_token');
+        return input ? String(input.value || '') : '';
+    }
+
+    function aiPageContext() {
+        var context = safePageContext();
+        return {
+            pageSlug: currentSlug,
+            pageTitle: currentGuide.title,
+            summary: context.summary,
+            visibleAreas: cleanList(context.whatsHere),
+            safetyReminders: cleanList(safeReminders())
+        };
+    }
+
+    function requestAiAnswer(question) {
+        state.abortController = typeof window.AbortController === 'function' ? new window.AbortController() : null;
+        var options = {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': csrfToken()
+            },
+            body: JSON.stringify({question: question, context: aiPageContext()})
+        };
+        if (state.abortController) {
+            options.signal = state.abortController.signal;
+            state.requestTimeout = window.setTimeout(function () {
+                state.abortController.abort();
+            }, 30000);
+        }
+
+        return window.fetch(aiEndpoint, options).then(function (response) {
+            return response.json().catch(function () {
+                return {success: 0, error: 'TASCA AI returned an invalid response.'};
+            }).then(function (payload) {
+                if (!response.ok || payload.success !== 1) {
+                    var failure = new Error(typeof payload.error === 'string' ? payload.error : 'TASCA AI is temporarily unavailable.');
+                    failure.publicMessage = failure.message;
+                    failure.code = typeof payload.code === 'string' ? payload.code : '';
+                    throw failure;
+                }
+                return assistantMessage(payload.text, {source: payload.source || currentGuide.title});
+            });
+        });
+    }
+
+    function completeQuestion() {
+        if (state.requestTimeout !== null) {
+            window.clearTimeout(state.requestTimeout);
+            state.requestTimeout = null;
+        }
+        state.abortController = null;
+        setBusy(false);
+        if (ui.root && ui.root.classList.contains('is-open') && ui.input) {
+            ui.input.focus();
+        } else if (ui.unread) {
+            ui.unread.hidden = false;
+        }
+    }
+
     function setBusy(isBusy) {
         state.busy = isBusy;
         if (ui.typing) {
@@ -380,25 +459,27 @@
         resizeInput();
         setBusy(true);
 
-        var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        state.responseTimer = window.setTimeout(function () {
-            try {
-                addMessage(buildAnswer(question));
-            } catch (ignored) {
-                addMessage(assistantMessage(
-                    'I could not prepare a local guide response. Try again or open the full Page Guide.',
-                    {error: true}
-                ));
-            } finally {
-                state.responseTimer = null;
-                setBusy(false);
-                if (ui.root && ui.root.classList.contains('is-open') && ui.input) {
-                    ui.input.focus();
-                } else if (ui.unread) {
-                    ui.unread.hidden = false;
-                }
+        if (containsSensitiveInput(question)) {
+            addMessage(assistantMessage(
+                'Do not enter employee names, IDs, contact details, payroll values, banking information, credentials, or other private records. Ask for general process guidance instead.',
+                {source: currentGuide.title}
+            ));
+            completeQuestion();
+            return;
+        }
+
+        requestAiAnswer(question).then(function (message) {
+            addMessage(message);
+        }).catch(function (error) {
+            if (error && error.name === 'AbortError') {
+                addMessage(assistantMessage('TASCA AI took too long to respond. Try again or open the Page Guide.', {error: true}));
+                return;
             }
-        }, reduceMotion ? 0 : 520);
+            var message = error && error.publicMessage
+                ? error.publicMessage
+                : 'TASCA AI is temporarily unavailable. Try again or open the Page Guide.';
+            addMessage(assistantMessage(message, {error: error && error.code !== 'sensitive_input'}));
+        }).finally(completeQuestion);
     }
 
     function isMobile() {
@@ -531,7 +612,7 @@
             + '<section class="tasca-chat-panel" id="tascaChatPanel" role="complementary" aria-label="TASCA AI assistant" aria-hidden="true">'
             + '<header class="tasca-chat-header">'
             + '<div class="tasca-chat-identity"><img class="tasca-chat-avatar" src="' + brandMarkPath + '" alt="" aria-hidden="true">'
-            + '<div class="tasca-chat-identity-copy"><strong>TASCA AI</strong><span class="tasca-chat-mode">Guide mode</span></div></div>'
+            + '<div class="tasca-chat-identity-copy"><strong>TASCA AI</strong><span class="tasca-chat-mode">Gemini guide mode</span></div></div>'
             + '<div class="tasca-chat-header-actions">'
             + '<button type="button" class="tasca-chat-action" id="tascaChatReset" aria-label="Start a new chat" title="Start a new chat"><i class="bx bx-refresh" aria-hidden="true"></i></button>'
             + '<button type="button" class="tasca-chat-action" id="tascaChatClose" aria-label="Minimize TASCA" title="Minimize TASCA"><i class="bx bx-minus" aria-hidden="true"></i></button>'
@@ -550,7 +631,7 @@
             + '<textarea class="tasca-chat-input" id="tascaChatInput" rows="1" maxlength="500" placeholder="Message TASCA..." autocomplete="off" enterkeyhint="send" aria-describedby="tascaChatPrivacy"></textarea>'
             + '<button type="submit" class="tasca-chat-send" id="tascaChatSend" aria-label="Send message" disabled><i class="bx bx-send" aria-hidden="true"></i></button>'
             + '</form>'
-            + '<p class="tasca-chat-privacy" id="tascaChatPrivacy">Guide mode only. Messages remain in memory and clear when this page reloads. TASCA cannot view or change HRIS records.</p>'
+            + '<p class="tasca-chat-privacy" id="tascaChatPrivacy">Gemini processes each question. Do not enter names, IDs, payroll values, banking details, credentials, or private records. TASCA cannot view or change HRIS records.</p>'
             + '</section>';
         document.body.appendChild(root);
 
@@ -627,7 +708,7 @@
             openChat();
             submitQuestion(question, false);
         },
-        mode: 'guide'
+        mode: 'gemini-guide'
     };
 
     if (document.readyState === 'loading') {
