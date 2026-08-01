@@ -7,7 +7,7 @@
 <script src="../restriction/js/page-restriction-03.js?v=20260727c"></script>
 <script src="../assets/js/hris-help-guides.js?v=20260728-actionable-errors"></script>
 <script src="../assets/js/hris-help.js?v=20260727d"></script>
-<script src="../assets/js/tasca-chat.js?v=20260801d"></script>
+<script src="../assets/js/tasca-chat.js?v=20260801e"></script>
 <script src="../assets/js/data-issue-tracker.js?v=20260727a"></script>
 <script src="../assets/js/hris-actionable-errors.js?v=20260728b"></script>
 <script src="../assets/js/hris-global.js?v=20260731b"></script>

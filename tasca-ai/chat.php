@@ -20,6 +20,7 @@ if (strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET')) !== 'POST') {
 
 require_once(__DIR__ . '/../includes/auth_guard.php');
 require_once(__DIR__ . '/../includes/tasca_gemini.php');
+require_once(__DIR__ . '/../includes/tasca_employee_reader.php');
 
 auth_require_role([1, 2, 3, 4, 5]);
 
@@ -37,15 +38,64 @@ $question = trim((string)($request['question'] ?? ''));
 if ($question === '' || mb_strlen($question) > 500) {
     tasca_chat_json(422, ['success' => 0, 'error' => 'Enter a message of up to 500 characters.']);
 }
+if (!tasca_ai_rate_limit(session_id())) {
+    tasca_chat_json(429, ['success' => 0, 'error' => 'TASCA is receiving too many messages. Wait a minute and try again.']);
+}
+
+$employeeIntent = tasca_employee_intent($question);
+if ($employeeIntent !== null) {
+    $bufferLevel = ob_get_level();
+    try {
+        ob_start();
+        require_once(__DIR__ . '/../config/db_connect.php');
+        ob_end_clean();
+        if (!isset($pdoConn) || !$pdoConn instanceof PDO) {
+            throw new RuntimeException('Employee read connection is unavailable.');
+        }
+
+        $employeeAnswer = tasca_employee_answer(
+            $pdoConn,
+            $question,
+            $employeeIntent,
+            auth_level(),
+            auth_client_ids()
+        );
+        $audit = is_array($employeeAnswer['audit'] ?? null) ? $employeeAnswer['audit'] : [];
+        log_action(sprintf(
+            'TASCA employee read: intent=%s; decision=%s; role=%d; scope=%s; rows=%d',
+            preg_replace('/[^a-z_]/', '', (string)($audit['intent'] ?? 'unknown')),
+            preg_replace('/[^a-z_]/', '', (string)($audit['decision'] ?? 'unknown')),
+            auth_level(),
+            preg_replace('/[^a-z-]/', '', (string)($audit['scope'] ?? 'unknown')),
+            max(0, (int)($audit['row_count'] ?? 0))
+        ), $pdoConn);
+
+        tasca_chat_json(200, [
+            'success' => 1,
+            'text' => $employeeAnswer['text'],
+            'source' => $employeeAnswer['source'],
+            'provider' => $employeeAnswer['provider'],
+            'model' => $employeeAnswer['model'],
+            'data_mode' => 'local-read-only',
+        ]);
+    } catch (Throwable $exception) {
+        while (ob_get_level() > $bufferLevel) {
+            ob_end_clean();
+        }
+        error_log('TASCA employee read error: ' . get_class($exception));
+        tasca_chat_json(503, [
+            'success' => 0,
+            'error' => 'TASCA could not read Employee Management safely. Try again or use the Employee Management page.',
+        ]);
+    }
+}
+
 if (tasca_ai_contains_sensitive_input($question)) {
     tasca_chat_json(422, [
         'success' => 0,
         'code' => 'sensitive_input',
-        'error' => 'Do not enter employee names, IDs, contact details, payroll values, banking information, credentials, or other private records. Ask for general process guidance instead.',
+        'error' => 'That message appears to contain restricted information. Employee names and IDs are accepted only for an approved exact lookup. Do not enter contact, salary, banking, government ID, address, credential, or other private data.',
     ]);
-}
-if (!tasca_ai_rate_limit(session_id())) {
-    tasca_chat_json(429, ['success' => 0, 'error' => 'TASCA is receiving too many messages. Wait a minute and try again.']);
 }
 
 $contextInput = is_array($request['context'] ?? null) ? $request['context'] : [];

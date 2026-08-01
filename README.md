@@ -23,9 +23,19 @@ The local credential file, database exports, logs, uploaded payroll data, and lo
 
 TASCA sends authenticated chat requests to the same-origin `tasca-ai/chat.php`
 gateway. The gateway keeps the Gemini credential server-side, requires CSRF and
-one of the five authenticated HRIS roles, rate-limits requests, blocks likely
-private identifiers before generation, and supplies only curated Page Guide
-context. Gemini cannot access or modify HRIS records.
+one of the five authenticated HRIS roles, and rate-limits requests. General guide
+questions receive only curated Page Guide context. Gemini has no direct database
+access and cannot access or modify HRIS records.
+
+Approved Employee Management requests are handled separately by the local
+`includes/tasca_employee_reader.php` policy and are never sent to Gemini. Admin,
+HR, and Payroll may perform exact employee directory lookups; Payroll may also
+see payroll employee ID. Coordinators may receive aggregate counts
+limited to assigned clients, while C&B has no Employee Management record access.
+The reader uses parameterized `SELECT` queries, returns at most five directory
+matches, records a value-free audit entry, and never queries salary, banking,
+government ID, address, contact, birthday, or credential fields. It exposes no
+write operation.
 
 Configure either `GEMINI_API_KEY` in the PHP runtime or point
 `TAASCOR_GEMINI_ENV_FILE` to a private environment file outside the web root.
@@ -35,8 +45,10 @@ Set `GEMINI_CA_BUNDLE` only when the local PHP runtime does not already have a
 trusted CA bundle configured. TLS certificate verification must remain enabled.
 See `.env.example` for the blank settings.
 
-Users must not enter employee names, IDs, contact details, compensation values,
-banking information, credentials, or other private records into TASCA.
+Authorized users may enter an exact employee name or employee ID for the local
+read-only directory lookup. Users must not enter contact details, compensation
+values, banking information, government IDs, addresses, credentials, or other
+restricted records into TASCA.
 
 ## Multi-client DTR identity gate
 

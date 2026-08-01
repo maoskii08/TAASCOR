@@ -105,12 +105,18 @@
     function welcomeMessage() {
         if (accessLevel() === '4') {
             return assistantMessage(
-                'Hi, I am TASCA, powered by Gemini AI. I can provide a read-only overview of ' + currentGuide.title + '. Use only controls visible to your Coordinator role. I cannot view or change HRIS records.',
+                'Hi, I am TASCA, powered by Gemini AI with secure TAASCOR read access. I can provide guide help and read-only employee counts across your assigned clients. Named employee lookups and record changes are not available to the Coordinator role.',
+                {source: currentGuide.title}
+            );
+        }
+        if (accessLevel() === '5') {
+            return assistantMessage(
+                'Hi, I am TASCA, powered by Gemini AI. I can provide read-only guidance for ' + currentGuide.title + '. Employee Management records are not available to the C&B role.',
                 {source: currentGuide.title}
             );
         }
         return assistantMessage(
-            'Hi, I am TASCA, powered by Gemini AI. I can provide a read-only overview of ' + currentGuide.title + ' or open the existing Page Guide. Use only controls visible to your role. I cannot view or change HRIS records.',
+            'Hi, I am TASCA, powered by Gemini AI with secure TAASCOR read access. I can provide guide help, approved employee counts, and exact employee directory lookups. Named records stay inside TAASCOR and are not sent to Gemini. I cannot change HRIS records.',
             {source: currentGuide.title}
         );
     }
@@ -250,19 +256,18 @@
         });
     }
 
-    function asksForPrivateRecord(question) {
+    function asksForForbiddenRecord(question) {
         var requestWords = ['show', 'find', 'give', 'tell', 'look up', 'lookup', 'display', 'reveal', 'what is'];
-        var sensitiveWords = ['bank account', 'contact number', 'employee id', 'pag-ibig number', 'pagibig number', 'password', 'pay amount', 'payslip amount', 'philhealth number', 'salary', 'sss number', 'tin number'];
+        var sensitiveWords = ['address', 'bank account', 'birthday', 'contact number', 'email', 'government id', 'pag-ibig number', 'pagibig number', 'password', 'pay amount', 'payslip amount', 'philhealth number', 'salary', 'sss number', 'tin number'];
         return hasAny(question, requestWords) && hasAny(question, sensitiveWords);
     }
 
-    function containsSensitiveInput(question) {
+    function containsForbiddenInput(question) {
         var compact = String(question || '').replace(/[\s()-]+/g, '');
-        return asksForPrivateRecord(normalise(question))
+        return asksForForbiddenRecord(normalise(question))
             || /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(question)
             || /(?:\+?63|0)?9\d{9}\b/.test(compact)
-            || /(?:PHP|₱|salary|wage|pay)\s*[:=]?\s*[0-9][0-9,.]*/i.test(question)
-            || /\b\d{8,}\b/.test(String(question || '').replace(/[\s-]+/g, ''));
+            || /(?:PHP|₱|salary|wage|pay)\s*[:=]?\s*[0-9][0-9,.]*/i.test(question);
     }
 
     function safePageContext() {
@@ -300,9 +305,9 @@
         var question = normalise(rawQuestion);
         var context = safePageContext();
 
-        if (asksForPrivateRecord(question)) {
+        if (asksForForbiddenRecord(question)) {
             return assistantMessage(
-                'I cannot view or reveal employee, payroll, banking, government ID, contact, credential, or client-restricted records. I can explain the approved process or open this page\'s guide.',
+                'I cannot reveal salary, banking, government ID, address, contact, credential, or other restricted employee fields. I can provide approved directory fields, employee counts, or process guidance.',
                 {source: currentGuide.title}
             );
         }
@@ -459,9 +464,9 @@
         resizeInput();
         setBusy(true);
 
-        if (containsSensitiveInput(question)) {
+        if (containsForbiddenInput(question)) {
             addMessage(assistantMessage(
-                'Do not enter employee names, IDs, contact details, payroll values, banking information, credentials, or other private records. Ask for general process guidance instead.',
+                'Do not enter contact details, salary values, banking information, government IDs, addresses, credentials, or other restricted data. Approved employee names and IDs may be used only for exact read-only directory lookups.',
                 {source: currentGuide.title}
             ));
             completeQuestion();
@@ -612,7 +617,7 @@
             + '<section class="tasca-chat-panel" id="tascaChatPanel" role="complementary" aria-label="TASCA AI assistant" aria-hidden="true">'
             + '<header class="tasca-chat-header">'
             + '<div class="tasca-chat-identity"><img class="tasca-chat-avatar" src="' + brandMarkPath + '" alt="" aria-hidden="true">'
-            + '<div class="tasca-chat-identity-copy"><strong>TASCA AI</strong><span class="tasca-chat-mode">Gemini guide mode</span></div></div>'
+            + '<div class="tasca-chat-identity-copy"><strong>TASCA AI</strong><span class="tasca-chat-mode">Gemini + secure HRIS read</span></div></div>'
             + '<div class="tasca-chat-header-actions">'
             + '<button type="button" class="tasca-chat-action" id="tascaChatReset" aria-label="Start a new chat" title="Start a new chat"><i class="bx bx-refresh" aria-hidden="true"></i></button>'
             + '<button type="button" class="tasca-chat-action" id="tascaChatClose" aria-label="Minimize TASCA" title="Minimize TASCA"><i class="bx bx-minus" aria-hidden="true"></i></button>'
@@ -623,6 +628,7 @@
             + '<div class="tasca-chat-quick-actions" id="tascaChatQuickActions" aria-label="Suggested questions">'
             + '<button type="button" class="tasca-chat-quick-action" data-tasca-question="Explain this page">Explain this page</button>'
             + '<button type="button" class="tasca-chat-quick-action" data-tasca-question="What can I do here?">What can I do here?</button>'
+            + '<button type="button" class="tasca-chat-quick-action" id="tascaChatEmployeeCount" data-tasca-question="How many active employees are there?">Active employee count</button>'
             + '<button type="button" class="tasca-chat-quick-action" data-tasca-question="Show the safest next steps">Safe next steps</button>'
             + '<button type="button" class="tasca-chat-quick-action" id="tascaChatGuideAction" data-tasca-action="guide">Open Page Guide</button>'
             + '</div>'
@@ -631,7 +637,7 @@
             + '<textarea class="tasca-chat-input" id="tascaChatInput" rows="1" maxlength="500" placeholder="Message TASCA..." autocomplete="off" enterkeyhint="send" aria-describedby="tascaChatPrivacy"></textarea>'
             + '<button type="submit" class="tasca-chat-send" id="tascaChatSend" aria-label="Send message" disabled><i class="bx bx-send" aria-hidden="true"></i></button>'
             + '</form>'
-            + '<p class="tasca-chat-privacy" id="tascaChatPrivacy">Gemini processes each question. Do not enter names, IDs, payroll values, banking details, credentials, or private records. TASCA cannot view or change HRIS records.</p>'
+            + '<p class="tasca-chat-privacy" id="tascaChatPrivacy">Gemini processes guide questions. Approved employee lookups stay inside TAASCOR and are not sent to Gemini. Never enter salary, banking, government ID, address, contact, credential, or other restricted data.</p>'
             + '</section>';
         document.body.appendChild(root);
 
@@ -649,6 +655,9 @@
         state.messages = [welcomeMessage()];
         if (accessLevel() === '4') {
             document.getElementById('tascaChatGuideAction').remove();
+        }
+        if (accessLevel() === '5') {
+            document.getElementById('tascaChatEmployeeCount').remove();
         }
         renderMessages();
         updateComposerState();
@@ -708,7 +717,7 @@
             openChat();
             submitQuestion(question, false);
         },
-        mode: 'gemini-guide'
+        mode: 'gemini-secure-read'
     };
 
     if (document.readyState === 'loading') {

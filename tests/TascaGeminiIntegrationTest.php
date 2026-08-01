@@ -26,6 +26,9 @@ $coordinatorInstruction = tasca_ai_system_instruction(4, []);
 $check(str_contains($coordinatorInstruction, 'Coordinator role is read-only'), 'Coordinator system instruction is explicitly read-only');
 $check(str_contains($coordinatorInstruction, 'Never claim that you viewed'), 'Gemini cannot claim record access or mutation');
 $check(str_contains($coordinatorInstruction, 'Do not request, reveal, infer'), 'Gemini is instructed not to handle private records');
+$check(str_contains($coordinatorInstruction, 'no direct access to databases'), 'Gemini has no direct database connection');
+$check(str_contains($coordinatorInstruction, 'separate local read-only policy before Gemini is called'), 'approved employee reads are explicitly separated from Gemini');
+$check(str_contains($coordinatorInstruction, 'never included in this Gemini prompt'), 'named employee records are never sent to Gemini');
 
 $secretPath = $root . '/.env.gemini';
 $envExample = (string)file_get_contents($root . '/.env.example');
