@@ -2,6 +2,13 @@
 
 TAASCOR's PHP/MySQL HRIS and payroll application.
 
+## Repository authority
+
+This Git worktree and its configured GitHub origin are the release source of
+truth. Parent recovery folders, FTP snapshots, generated release artifacts, and
+other empty local repositories are evidence or working storage only; never use
+them as a deployment source.
+
 ## Local setup
 
 1. Copy `config/mysql-config.example.php` to `config/mysql-config.php`.
@@ -18,6 +25,28 @@ php -S 127.0.0.1:8797 -t .
 ```
 
 The local credential file, database exports, logs, uploaded payroll data, and local authentication helpers are intentionally excluded from source control.
+
+## Production parity verification
+
+Every manual deployment must finish with a read-only full-runtime comparison,
+in addition to checking the files in the release delta. Run the verifier against
+the exact commit that was packaged and the production root confirmed during the
+deployment preflight:
+
+```powershell
+python tools/verify-production-parity.py `
+  --repo . `
+  --git-ref <verified-commit-sha> `
+  --env .env.deploy `
+  --production-root <confirmed-absolute-production-root> `
+  --output <outside-repo-evidence-path>.json
+```
+
+The command trusts only a host key already present in the operator's known-hosts
+file, never prints SSH credentials, and returns a non-zero exit code for missing
+or hash-mismatched runtime files. A release cannot receive a parity `GO` until
+`live_files_matched` equals `runtime_files_expected` with empty `missing_files`
+and `mismatches` arrays.
 
 ## TASCA Gemini AI
 
