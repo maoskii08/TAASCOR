@@ -1,6 +1,8 @@
 <?php
+
 declare(strict_types=1);
-require_once __DIR__.'/includes/guide_component.php';
-$requested=trim((string)($_GET['page']??'overview'));$manifest=recruitment_guide_manifest();if(!isset($manifest[$requested]))$requested='overview';
-header('X-Frame-Options: DENY');header('X-Content-Type-Options: nosniff');header('Referrer-Policy: same-origin');
-?><!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Recruitment Guide Center | TAASCOR HRIS</title><link rel="stylesheet" href="assets/recruitment.css"></head><body class="recruitment-page"><main class="recruitment-shell"><p class="recruitment-kicker">TAASCOR learning system</p><h1>Recruitment and onboarding Guide Center</h1><p>Search the complete candidate and staff journey, page by page. Availability labels always reflect the current source-locked implementation boundary.</p><button type="button" class="recruitment-guide-launcher" data-guide-open-fallback>Open Guide Center</button></main><?php recruitment_guide_render($requested); ?><script>window.addEventListener('DOMContentLoaded',()=>{const launcher=document.querySelector('[data-guide-open]');document.querySelector('[data-guide-open-fallback]')?.addEventListener('click',()=>launcher?.click());launcher?.focus();launcher?.click();},{once:true});</script></body></html>
+
+header('Cache-Control: no-store');
+header('X-Robots-Tag: noindex, nofollow');
+header('Location: https://taascor.com/recruitment/guide/', true, 302);
+exit;

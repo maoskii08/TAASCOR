@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../includes/public_candidate_origin.php';
+recruitment_redirect_candidate_to_public_origin();
 require_once __DIR__ . '/../includes/feature.php';
 header('X-Frame-Options: DENY');
 header('X-Content-Type-Options: nosniff');

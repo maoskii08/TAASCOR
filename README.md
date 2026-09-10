@@ -226,4 +226,5 @@ php tests/RecruitmentDatabaseTest.php
 php tests/RecruitmentR1DatabaseTest.php
 php tests/RecruitmentR2R5ImplementationTest.php
 php tests/RecruitmentGuideTest.php
+php tests/RecruitmentDomainBoundaryTest.php
 ```

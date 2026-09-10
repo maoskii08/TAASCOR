@@ -33,4 +33,4 @@ The structured source is `includes/guide_manifest.php`. Availability is evaluate
 | `staff.reports` | Operations snapshot | `/recruitment/staff/reports.php` | Recruitment and HR leaders | Review authoritative workload measures |
 | `staff.access` | Recruitment access | `/recruitment/staff/admin/access.php` | Administrators | Govern scoped, expiring capabilities |
 
-The full searchable experience is available at `/recruitment/guide.php`. Every shared candidate and staff page also receives a contextual **Guide** button that opens its own article first.
+The full public searchable experience is available at `https://taascor.com/recruitment/guide/`; `/recruitment/guide.php` redirects there. Staff HRIS pages retain contextual **Guide** controls. Candidate HRIS preview URLs redirect to their corresponding canonical `taascor.com` routes.

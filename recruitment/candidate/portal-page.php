@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../includes/public_candidate_origin.php';
+recruitment_redirect_candidate_to_public_origin();
 require_once __DIR__ . '/../includes/candidate_portal_runtime.php';
 require_once __DIR__ . '/../includes/candidate_runtime.php';
 require_once __DIR__ . '/../includes/candidate_csrf.php';

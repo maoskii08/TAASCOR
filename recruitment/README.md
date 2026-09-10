@@ -22,13 +22,11 @@ No environment value can activate public jobs, candidate identity, staff data ac
 ## Routes
 
 - `/recruitment/` is the authenticated Admin/HR workspace.
-- `/recruitment/guide.php` is the searchable Guide Center for the complete candidate and staff journey. Every human-facing recruitment page also includes a contextual `?` launcher that opens directly to that page's guide, task recipe, process flow, governance notes, and live availability state.
+- `/recruitment/guide.php` redirects to the canonical public Guide Center at `https://taascor.com/recruitment/guide/`. Every staff recruitment page retains its contextual `?` launcher for role-protected task guidance.
 - `/recruitment/staff/requisitions.php`, `jobs.php`, `pipeline.php`, `interviews.php`, `offers.php`, `onboarding.php`, `conversions.php`, `exceptions.php`, and `reports.php` are the source-locked recruitment operations queues.
 - `/recruitment/staff/admin/access.php` documents the explicit capability catalogue; `/recruitment/staff/actions.php` is the authenticated, CSRF-protected staff action API.
 - `/recruitment/public/jobs.php` is the future public jobs projection used by the TAASCOR website. It returns HTTP 503 in foundation mode and does not connect to the database.
-- `/recruitment/candidate/` is the candidate sign-in preview.
-- `/recruitment/candidate/register.php`, `recover.php`, `reset.php`, `verify.php`, and `privacy.php` are source-locked candidate account surfaces.
-- `/recruitment/candidate/dashboard.php`, `applications.php`, `application.php`, `apply.php`, `interviews.php`, `offers.php`, `onboarding.php`, `documents.php`, `messages.php`, and `settings.php` provide the complete authenticated candidate journey when qualified.
+- `/recruitment/candidate/*` files retain the reviewed candidate implementation as a source reference, but web requests redirect to the corresponding canonical `taascor.com` candidate route. The Visiotech HRIS hostname is not a candidate destination.
 
 Candidate registration, sign-in, verification, recovery, reset, privacy, application, interview, offer, onboarding, document, communication, and settings routes are implemented mobile first. All mutation controls are disabled and every action returns HTTP 503 while the source stage is `foundation`.
 
@@ -65,6 +63,7 @@ php tests/RecruitmentDatabaseTest.php
 php tests/RecruitmentR1DatabaseTest.php
 php tests/RecruitmentR2R5ImplementationTest.php
 php tests/RecruitmentGuideTest.php
+php tests/RecruitmentDomainBoundaryTest.php
 ```
 
 The foundation and identity migrations were previously exercised against disposable loopback-only MySQL with synthetic `.invalid` data. Migrations 03 through 06 and the full lifecycle require the planned database and business UAT pass before qualification. Before any production candidate is proposed, approve and test the privacy/retention matrix, initial staff grant bootstrap, mail transport, malware scanner, private storage/restore exclusions, employee conversion mapping, and website-to-HRIS contract.

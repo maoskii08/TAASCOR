@@ -18,12 +18,18 @@ require __DIR__ . '/../recruitment/candidate/index.php';
 $loginHtml = (string)ob_get_clean();
 $accountPage = (string)file_get_contents(__DIR__ . '/../recruitment/candidate/account-page.php');
 $controller = (string)file_get_contents(__DIR__ . '/../recruitment/candidate/actions/account.php');
+$originBoundary = (string)file_get_contents(__DIR__ . '/../recruitment/includes/public_candidate_origin.php');
 $css = (string)file_get_contents(__DIR__ . '/../recruitment/assets/candidate.css');
 $js = (string)file_get_contents(__DIR__ . '/../recruitment/assets/candidate.js');
 $candidateFiles = $accountPage . $controller . $css . $js
     . (string)file_get_contents(__DIR__ . '/../recruitment/candidate/privacy.php');
 
 $check(!recruitment_candidate_runtime_ready(), 'candidate runtime remains source-locked');
+$check(str_contains($originBoundary, "TAASCOR_PUBLIC_CANDIDATE_ORIGIN = 'https://taascor.com'"), 'candidate canonical origin is taascor.com');
+$check(str_contains($originBoundary, "'apply.php'") && str_contains($originBoundary, "'/apply/'"), 'candidate apply redirects retain a validated same-origin slug');
+$check(str_contains($accountPage, 'recruitment_redirect_candidate_to_public_origin'), 'candidate account pages enforce the public origin boundary');
+$portalPage = (string)file_get_contents(__DIR__ . '/../recruitment/candidate/portal-page.php');
+$check(str_contains($portalPage, 'recruitment_redirect_candidate_to_public_origin'), 'candidate journey pages enforce the public origin boundary');
 $check(substr_count(strtolower($loginHtml), '<h1') === 1, 'candidate login renders one primary heading');
 $check(str_contains($loginHtml, '<fieldset disabled>'), 'locked preview disables every candidate form control');
 $check(str_contains($loginHtml, 'does not collect or submit personal information'), 'locked preview states its data-collection boundary');
