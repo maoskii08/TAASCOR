@@ -48,6 +48,12 @@ parity_check(
 );
 parity_check(!isset($files['.env.example']), 'environment templates are excluded from the public web runtime');
 parity_check(
+    !isset($files['Audit/AUDIT_2026-09-09.md'])
+        && !isset($files['recruitment/README.md']),
+    'audit and module documentation are excluded from the public web runtime'
+);
+parity_check(isset($files['recruitment/guide.php']), 'recruitment Guide Center remains parity-controlled');
+parity_check(
     !isset($files['config/mysql-config.example.php']),
     'nested environment-specific config templates are excluded from the public web runtime'
 );

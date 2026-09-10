@@ -18,12 +18,14 @@ from typing import BinaryIO, Iterable
 
 
 EXCLUDED_TOP_LEVEL = {
+    "Audit",
     "audit_reports",
     "database",
     "tests",
     "tools",
 }
 EXCLUDED_SEGMENTS = {"migrations", "tests"}
+EXCLUDED_SUFFIXES = {".md"}
 EXCLUDED_ROOT_FILES = {
     ".env.example",
     ".gitattributes",
@@ -62,6 +64,8 @@ def is_runtime_path(raw_path: str) -> bool:
     if CONTROL_CHARACTERS.search(raw_path):
         raise RuntimeError(f"Tracked path contains unsupported control characters: {raw_path!r}")
     if parts[0] in EXCLUDED_TOP_LEVEL or parts[0] in EXCLUDED_ROOT_FILES:
+        return False
+    if path.suffix.lower() in EXCLUDED_SUFFIXES:
         return False
     if path.as_posix() in EXCLUDED_RUNTIME_PATHS:
         return False
