@@ -209,3 +209,21 @@ review. Email delivery remains disabled until the server mail transport and
 ## Deployment
 
 GitHub is the source of truth. Production releases are built from a reviewed commit and uploaded to Hostinger manually. Pushing this repository does not deploy production.
+
+## Recruitment and onboarding foundation
+
+The authenticated recruitment and onboarding lifecycle is being added inside HRIS under `recruitment/`. The TAASCOR website remains the public job-discovery surface. The foundation is source-locked off and cannot collect candidate data, publish jobs, enable staff recruitment data, or mutate records through environment flags alone.
+
+See `recruitment/README.md` for the current scope and run:
+
+```powershell
+php tests/RecruitmentFoundationTest.php
+php tests/RecruitmentR1SecurityTest.php
+php tests/RecruitmentCandidateSurfaceTest.php
+php tests/RecruitmentStaffOperationsSurfaceTest.php
+php tests/RecruitmentWorkspaceRenderTest.php
+php tests/RecruitmentDatabaseTest.php
+php tests/RecruitmentR1DatabaseTest.php
+php tests/RecruitmentR2R5ImplementationTest.php
+php tests/RecruitmentGuideTest.php
+```

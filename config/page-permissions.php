@@ -23,6 +23,7 @@ $role_names = [
 $page_map = [
     80  => ['Dashboard',                 'Dashboard',   false],
     81  => ['Employee Management',       'HR',          false],
+    89  => ['Recruitment',               'HR',          false],
     87  => ['Terminated Employees',      'HR',          false],
     88  => ['Forms & Templates',         'HR',          false],
     1   => ['Data Issue Tracker',        'Data Quality',false],
@@ -67,14 +68,14 @@ $page_map = [
 $pages = [
     '1' => [
                 1,11,12,13,14,15,16,17,18,19,20,
-                80,81,82,83,84,85,86,87,88,
+                80,81,82,83,84,85,86,87,88,89,
                 5,51,52,53,54,55,56,
                 3,31,32,33,34,35,36,37,38,39,
                 70,71,72,
             ], // Admin — all pages
     '2' => [
                 1,11,12,13,14,15,16,17,18,19,20,
-                80,81,84,87,88,3,38,39,
+                80,81,84,87,88,89,3,38,39,
             ], // HR
     '3' => [
                 80,81,82,83,84,87,

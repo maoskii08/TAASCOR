@@ -6,11 +6,11 @@ product
 
 ## Users
 
-TAASCOR HRIS serves Payroll Officers, HR teams, application administrators, executives, and authorized client operations users. They work across multiple clients, payroll periods, sites, and inconsistent source formats. Their primary job is to turn governed employee and DTR data into accurate, reviewable, auditable payroll without losing context when an exception needs correction.
+TAASCOR HRIS serves candidates, Recruitment, HR teams, Payroll Officers, application administrators, executives, and authorized client operations users. Staff work across multiple clients, payroll periods, sites, and inconsistent source formats. Candidates need a secure, mobile-first path from an approved role through application, decision, offer, onboarding, and employee conversion. Staff need the same lifecycle to remain owned, reviewable, and auditable without losing context when an exception needs correction.
 
 ## Product Purpose
 
-TAASCOR HRIS provides employee-master management, multi-client DTR intake, identity resolution, payroll validation, reconciliation, approval, payslip generation, and operational reporting. Success means a user can upload a client file, understand every control decision, correct issues at their source, resume the same workflow state, and release only complete and evidenced payroll results.
+TAASCOR HRIS provides recruitment and onboarding, employee-master management, multi-client DTR intake, identity resolution, payroll validation, reconciliation, approval, payslip generation, and operational reporting. Success means a candidate can move through an honest, understandable hiring journey and an authorized user can understand every control decision, correct issues at their source, resume the same workflow state, and release or convert only complete and evidenced results.
 
 ## Brand Personality
 
@@ -32,6 +32,8 @@ Calm, precise, accountable. The product should feel capable and trustworthy unde
 3. Keep payroll fail-closed while making recovery fast and understandable.
 4. Separate configuration, processing, review, approval, and release responsibilities clearly.
 5. Make evidence, ownership, and audit status visible at the point of decision.
+6. Keep public job discovery separate from private candidate, employee, and payroll records.
+7. Require human approval for hiring decisions, offers, sensitive requirements, employee conversion, payroll approval, and release.
 
 ## Accessibility & Inclusion
 

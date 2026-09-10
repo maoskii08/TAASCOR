@@ -33,6 +33,8 @@ tools/fuji-reconciliation/private-output/
 # Versioned schema migrations are source code.
 !dtr-format-engine/migrations/
 !dtr-format-engine/migrations/*.sql
+!recruitment/migrations/
+!recruitment/migrations/*.sql
 
 # Local-only access helpers
 local-dev-admin-session.php

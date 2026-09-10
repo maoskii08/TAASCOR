@@ -83,6 +83,13 @@ session_write_close();
               <div class="text-truncate" data-i18n="Employee Management">Employee Management</div>
             </a>
           </li>
+
+          <li style="display:none" class="menu-item" value="89" id="a89">
+            <a href="/<?php echo $pathParts[6];?>/recruitment/" class="menu-link">
+              <i class='menu-icon tf-icons bx bx-user-voice'></i>
+              <div class="text-truncate" data-i18n="Recruitment">Recruitment</div>
+            </a>
+          </li>
           
           <li style="display:none" class="menu-item master" value="1" id="a1">
             <a href="javascript:void(0);" class="menu-link menu-toggle">
