@@ -21,7 +21,7 @@ $check(RecruitmentPolicy::canTransition('conversion','approved','executed'),'con
 $document=$read('recruitment/model/RecruitmentDocumentService.php');
 foreach(['is_uploaded_file','finfo','move_uploaded_file','hash_file','canRelease','recruitment_document_events'] as $control){$check(str_contains($document,$control),'document flow includes '.$control);}
 $check(str_contains($read('recruitment/workers/document-scan-worker.php'),'escapeshellarg'),'scanner invokes its approved command with escaped paths');
-$notification=$read('recruitment/workers/notification-delivery-worker.php');
+$notification=$read('recruitment/model/RecruitmentNotificationDeliveryService.php');
 $check(str_contains($notification,'recruitment_notification_attempts'),'notification delivery records provider attempts');
 $check(str_contains($notification,"'dead_letter'"),'notification delivery has a dead-letter state');
 $maintenance=$read('recruitment/workers/workflow-maintenance-worker.php');

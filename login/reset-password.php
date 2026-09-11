@@ -10,21 +10,17 @@ if (!preg_match('/^[a-f0-9]{64}$/', $token)) { header('Location: ./'); exit(); }
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Reset Password — TAASCOR HRIS</title>
-  <link rel="icon" type="image/x-icon" href="../assets/img/png/logo.png"/>
-  <link rel="stylesheet" href="../assets/vendor/fonts/boxicons.css"/>
-  <link rel="stylesheet" href="../assets/vendor/css/core.css"/>
-  <link rel="stylesheet" href="../assets/vendor/css/theme-default.css"/>
+  <link rel="icon" type="image/x-icon" href="../assets/img/favicon/favicon.ico"/>
+  <link rel="stylesheet" href="vendors/bootstrap-4.6.0/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="../assets/css/login.css"/>
-  <script src="../assets/vendor/js/helpers.js"></script>
-  <script src="../assets/js/config.js"></script>
 </head>
 <body>
 <div class="container" style="max-width:460px;margin:80px auto;padding:20px;">
   <div style="text-align:center;margin-bottom:32px;">
     <img src="../assets/img/svg/logo.svg" class="img-fluid" width="260px" alt="TAASCOR HRIS">
-    <h4 style="margin-top:16px;color:#1a237e;">Set New Password</h4>
+    <h1 style="margin-top:16px;color:#1a237e;font-size:2rem;">Set New Password</h1>
   </div>
 
   <div class="card shadow-sm">
@@ -34,45 +30,45 @@ if (!preg_match('/^[a-f0-9]{64}$/', $token)) { header('Location: ./'); exit(); }
       <div id="formSection">
         <!-- Token validity check will show/hide this -->
         <div id="loadingMsg" class="text-center text-muted py-3">
-          <i class="bx bx-loader-alt bx-spin"></i> Validating link...
+          Validating link...
         </div>
         <div id="resetForm" style="display:none">
           <div class="mb-3">
-            <label class="form-label">New Password</label>
+            <label class="form-label" for="passInput">New Password</label>
             <div class="input-group">
               <input type="password" id="passInput" class="form-control" autocomplete="new-password"
                      placeholder="12+ characters with upper, lower, number, symbol">
               <button class="btn btn-outline-secondary password-toggle" type="button"
                       data-target="passInput" aria-label="Show new password" aria-pressed="false">
-                <i class="bx bx-show" aria-hidden="true"></i>
+                <span aria-hidden="true">Show</span>
               </button>
             </div>
           </div>
           <div class="mb-3">
-            <label class="form-label">Confirm Password</label>
+            <label class="form-label" for="confirmInput">Confirm Password</label>
             <div class="input-group">
               <input type="password" id="confirmInput" class="form-control" autocomplete="new-password"
                      placeholder="Repeat new password">
               <button class="btn btn-outline-secondary password-toggle" type="button"
                       data-target="confirmInput" aria-label="Show confirmed password" aria-pressed="false">
-                <i class="bx bx-show" aria-hidden="true"></i>
+                <span aria-hidden="true">Show</span>
               </button>
             </div>
           </div>
           <button id="btnReset" class="btn btn-primary w-100">
-            <i class="bx bx-lock-open-alt me-1"></i> Set New Password
+            Set New Password
           </button>
         </div>
       </div>
 
       <div class="text-center mt-3">
-        <a href="./" class="small text-muted"><i class="bx bx-arrow-back me-1"></i>Back to Login</a>
+        <a href="./" class="small text-muted">Back to Login</a>
       </div>
     </div>
   </div>
 </div>
 
-<script src="../assets/vendor/libs/jquery/jquery.js"></script>
+<script src="vendors/bootstrap-core/jquery-3.5.1.js"></script>
 <script>
 var token = '<?= htmlspecialchars($token, ENT_QUOTES) ?>';
 var csrfToken = <?= json_encode(csrf_token()) ?>;
@@ -83,7 +79,7 @@ $('.password-toggle').on('click', function () {
     input.type = show ? 'text' : 'password';
     $(this).attr('aria-pressed', show ? 'true' : 'false')
            .attr('aria-label', show ? 'Hide password' : 'Show password')
-           .find('i').toggleClass('bx-show', !show).toggleClass('bx-hide', show);
+           .find('span').text(show ? 'Hide' : 'Show');
 });
 
 // Validate token on load

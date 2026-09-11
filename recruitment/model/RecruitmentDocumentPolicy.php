@@ -26,7 +26,9 @@ final class RecruitmentDocumentPolicy
     {
         $root = rtrim(str_replace('\\', '/', $root), '/');
         $documentRoot = rtrim(str_replace('\\', '/', $documentRoot), '/');
-        return $root !== '' && $documentRoot !== '' && !str_starts_with(strtolower($root . '/'), strtolower($documentRoot . '/'));
+        return self::isAbsolutePath($root)
+            && self::isAbsolutePath($documentRoot)
+            && !str_starts_with(strtolower($root . '/'), strtolower($documentRoot . '/'));
     }
 
     public static function storageKey(): string
@@ -34,8 +36,23 @@ final class RecruitmentDocumentPolicy
         return gmdate('Y/m') . '/' . bin2hex(random_bytes(24)) . '.quarantine';
     }
 
+    public static function storagePath(string $root, string $storageKey): string
+    {
+        $normalizedRoot = rtrim(str_replace('\\', '/', trim($root)), '/');
+        $normalizedKey = str_replace('\\', '/', trim($storageKey));
+        if (!self::isAbsolutePath($normalizedRoot) || !preg_match('#^\d{4}/\d{2}/[a-f0-9]{48}\.quarantine$#', $normalizedKey)) {
+            throw new RuntimeException('The recruitment document storage path is invalid.');
+        }
+        return str_replace('/', DIRECTORY_SEPARATOR, $normalizedRoot . '/' . $normalizedKey);
+    }
+
     public static function canRelease(string $scanStatus, string $reviewStatus): bool
     {
         return $scanStatus === 'clean' && $reviewStatus === 'approved';
+    }
+
+    private static function isAbsolutePath(string $path): bool
+    {
+        return str_starts_with($path, '/') || (bool)preg_match('#^[A-Za-z]:/#', $path);
     }
 }

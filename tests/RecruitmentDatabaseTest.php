@@ -37,6 +37,8 @@ $check = static function (bool $condition, string $message) use (&$failures): vo
     echo "PASS: {$message}\n";
 };
 
+$repository = new RecruitmentRepository($db);
+$baselineSummary = $repository->staffSummary();
 $db->beginTransaction();
 try {
     $candidate = $db->prepare(
@@ -124,28 +126,30 @@ try {
         'job_snapshot' => json_encode(['title' => 'Synthetic Warehouse Associate'], JSON_THROW_ON_ERROR),
     ]);
 
-    $repository = new RecruitmentRepository($db);
-    $jobs = $repository->publishedJobs();
+    $jobs = array_values(array_filter(
+        $repository->publishedJobs(),
+        static fn (array $job): bool => ($job['public_id'] ?? '') === '30000000-0000-4000-8000-000000000001'
+    ));
     $summary = $repository->staffSummary();
 
     $check(count($jobs) === 1, 'repository returns the one active synthetic published job');
     $check(($jobs[0]['public_id'] ?? '') === '30000000-0000-4000-8000-000000000001', 'public job projection uses the immutable public identifier');
     $check(!array_key_exists('requisition_id', $jobs[0]), 'public job projection omits internal requisition identifiers');
     $check(!array_key_exists('published_by_username', $jobs[0]), 'public job projection omits staff identity');
-    $check(($summary['approved_requisitions'] ?? 0) === 1, 'staff summary counts approved requisitions');
-    $check(($summary['published_jobs'] ?? 0) === 1, 'staff summary counts published jobs');
-    $check(($summary['active_applications'] ?? 0) === 1, 'staff summary counts active applications');
-    $check(($summary['ready_for_conversion'] ?? 0) === 0, 'staff summary does not fabricate conversion-ready candidates');
+    $check(($summary['approved_requisitions'] ?? 0) === ($baselineSummary['approved_requisitions'] ?? 0) + 1, 'staff summary counts the synthetic approved requisition');
+    $check(($summary['published_jobs'] ?? 0) === ($baselineSummary['published_jobs'] ?? 0) + 1, 'staff summary counts the synthetic published job');
+    $check(($summary['active_applications'] ?? 0) === ($baselineSummary['active_applications'] ?? 0) + 1, 'staff summary counts the synthetic active application');
+    $check(($summary['ready_for_conversion'] ?? 0) === ($baselineSummary['ready_for_conversion'] ?? 0), 'staff summary does not fabricate conversion-ready candidates');
 } finally {
     $db->rollBack();
 }
 
 $remainingRows = (int)$db->query(
-    'SELECT
-        (SELECT COUNT(*) FROM recruitment_candidates)
-      + (SELECT COUNT(*) FROM recruitment_requisitions)
-      + (SELECT COUNT(*) FROM recruitment_jobs)
-      + (SELECT COUNT(*) FROM recruitment_applications)'
+    "SELECT
+        (SELECT COUNT(*) FROM recruitment_candidates WHERE public_id = '10000000-0000-4000-8000-000000000001')
+      + (SELECT COUNT(*) FROM recruitment_requisitions WHERE public_id = '20000000-0000-4000-8000-000000000001')
+      + (SELECT COUNT(*) FROM recruitment_jobs WHERE public_id = '30000000-0000-4000-8000-000000000001')
+      + (SELECT COUNT(*) FROM recruitment_applications WHERE public_id = '40000000-0000-4000-8000-000000000001')"
 )->fetchColumn();
 $check($remainingRows === 0, 'synthetic database verification rolls back completely');
 

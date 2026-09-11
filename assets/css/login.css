@@ -88,16 +88,33 @@
     margin: 13px 0;
   }
 
+  .field-label {
+    display: block;
+    margin-bottom: 7px;
+    color: #27344d;
+    font-size: 14px;
+    font-weight: 700;
+    text-align: left;
+  }
+
   .input-box input {
     width: 100%;
-    padding: 13px 50px 13px 20px;
+    padding: 13px 20px;
     background: #f5f5f5;
     border-radius: 8px;
-    border: none;
+    border: 1px solid #d9deea;
     outline: none;
     font-size: 16px;
     color: #333;
     font-weight: 500;
+  }
+
+  .input-box input:focus-visible,
+  .form-check-input:focus-visible,
+  a:focus-visible,
+  button:focus-visible {
+    outline: 3px solid #ffdc13;
+    outline-offset: 3px;
   }
 
   .input-box input::placeholder {

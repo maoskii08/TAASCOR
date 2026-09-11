@@ -52,6 +52,7 @@ $check(RecruitmentDocumentPolicy::validateUpload('application/pdf', 2048, 'resum
 $check(RecruitmentDocumentPolicy::validateUpload('text/html', 2048, 'resume.html') !== [], 'unapproved document media types fail closed');
 $check(!RecruitmentDocumentPolicy::privateRootIsSafe('C:/site/public_html/private', 'C:/site/public_html'), 'document storage inside the web root is rejected');
 $check(RecruitmentDocumentPolicy::privateRootIsSafe('C:/site-private/recruitment', 'C:/site/public_html'), 'document storage outside the web root is eligible');
+$check(!RecruitmentDocumentPolicy::privateRootIsSafe('private/recruitment', 'C:/site/public_html'), 'relative private document roots fail closed');
 $check(!RecruitmentDocumentPolicy::canRelease('quarantined', 'approved'), 'unscanned documents cannot be released');
 $check(RecruitmentDocumentPolicy::canRelease('clean', 'approved'), 'only clean and approved documents can be released');
 

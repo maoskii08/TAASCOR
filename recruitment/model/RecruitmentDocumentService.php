@@ -4,9 +4,14 @@ declare(strict_types=1);
 
 final class RecruitmentDocumentService
 {
-    public function __construct(private PDO $db, private string $dataKey, private string $privateRoot)
+    public function __construct(
+        private PDO $db,
+        private string $dataKey,
+        private string $privateRoot,
+        ?string $documentRoot = null
+    )
     {
-        $documentRoot = (string)($_SERVER['DOCUMENT_ROOT'] ?? '');
+        $documentRoot ??= (string)($_SERVER['DOCUMENT_ROOT'] ?? '');
         if (!RecruitmentDocumentPolicy::privateRootIsSafe($privateRoot, $documentRoot)) {
             throw new RuntimeException('Recruitment document storage must be configured outside the web root.');
         }
@@ -61,7 +66,7 @@ final class RecruitmentDocumentService
         if ((int)$quota->fetchColumn() + $size > 26_214_400) throw new DomainException('Your secure document storage quota has been reached.');
 
         $key = RecruitmentDocumentPolicy::storageKey();
-        $target = rtrim($this->privateRoot, '/\\') . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $key);
+        $target = RecruitmentDocumentPolicy::storagePath($this->privateRoot, $key);
         $directory = dirname($target);
         if (!is_dir($directory) && !mkdir($directory, 0700, true) && !is_dir($directory)) throw new RuntimeException('Secure storage could not be prepared.');
         if (!move_uploaded_file($tmp, $target)) throw new RuntimeException('The upload could not be moved into quarantine.');
@@ -120,7 +125,7 @@ final class RecruitmentDocumentService
     private function releasedFile(array $document, string $actorType, string $actor): array
     {
         if (!RecruitmentDocumentPolicy::canRelease((string)$document['scan_status'], (string)$document['review_status'])) throw new DomainException('This document is not approved for release.');
-        $path = rtrim($this->privateRoot, '/\\') . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, (string)$document['storage_key']);
+        $path = RecruitmentDocumentPolicy::storagePath($this->privateRoot, (string)$document['storage_key']);
         if (!is_file($path) || !hash_equals((string)$document['content_sha256'], hash_file('sha256',$path))) throw new RuntimeException('Document integrity verification failed.');
         $this->event((int)$document['document_id'], 'released', $actorType, $actor, []);
         return ['path'=>$path,'name'=>RecruitmentSecurity::decrypt((string)$document['original_name_ciphertext'],$this->dataKey),'media_type'=>(string)$document['media_type'],'byte_size'=>(int)$document['byte_size']];

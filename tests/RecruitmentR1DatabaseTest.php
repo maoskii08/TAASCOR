@@ -29,17 +29,26 @@ $check = static function (bool $condition, string $message) use (&$failures): vo
     echo "PASS: {$message}\n";
 };
 
-$email = 'synthetic.identity@example.invalid';
+$email = 'synthetic.identity.' . bin2hex(random_bytes(4)) . '@example.invalid';
 $initialPassword = 'Synthetic-Identity-42!';
 $result = $service->register($email, $initialPassword, 'synthetic-notice-v1');
 $check(($result['message'] ?? '') === RecruitmentSecurity::GENERIC_ACCOUNT_RESPONSE, 'registration returns the anti-enumeration response');
 $service->register(strtoupper($email), $initialPassword, 'synthetic-notice-v1');
-$check((int)$db->query('SELECT COUNT(*) FROM recruitment_candidates')->fetchColumn() === 1, 'normalized duplicate registration creates no second account');
-$check((int)$db->query('SELECT COUNT(*) FROM recruitment_candidate_consents')->fetchColumn() === 1, 'candidate privacy acknowledgement is durable');
+$emailHash = RecruitmentPolicy::emailLookupHash($email, $lookupKey);
+$candidateCount = $db->prepare('SELECT COUNT(*) FROM recruitment_candidates WHERE email_lookup_hash = :email_hash');
+$candidateCount->execute(['email_hash' => $emailHash]);
+$check((int)$candidateCount->fetchColumn() === 1, 'normalized duplicate registration creates no second account');
 
-$candidate = $db->query('SELECT candidate_id, email_ciphertext, session_version FROM recruitment_candidates LIMIT 1')->fetch();
+$candidateQuery = $db->prepare('SELECT candidate_id, public_id, email_ciphertext, session_version FROM recruitment_candidates WHERE email_lookup_hash = :email_hash LIMIT 1');
+$candidateQuery->execute(['email_hash' => $emailHash]);
+$candidate = $candidateQuery->fetch();
+$consentCount = $db->prepare('SELECT COUNT(*) FROM recruitment_candidate_consents WHERE candidate_id = :candidate_id');
+$consentCount->execute(['candidate_id' => $candidate['candidate_id']]);
+$check((int)$consentCount->fetchColumn() === 1, 'candidate privacy acknowledgement is durable');
 $check(RecruitmentSecurity::decrypt((string)$candidate['email_ciphertext'], $dataKey) === $email, 'stored candidate email decrypts only with the data key');
-$notification = $db->query("SELECT payload_json, delivery_status FROM recruitment_notification_outbox WHERE message_type = 'verify_email' LIMIT 1")->fetch();
+$notificationQuery = $db->prepare("SELECT payload_json, delivery_status FROM recruitment_notification_outbox WHERE candidate_id = :candidate_id AND message_type = 'verify_email' ORDER BY notification_id DESC LIMIT 1");
+$notificationQuery->execute(['candidate_id' => $candidate['candidate_id']]);
+$notification = $notificationQuery->fetch();
 $payload = json_decode((string)$notification['payload_json'], true, 512, JSON_THROW_ON_ERROR);
 $verificationToken = RecruitmentSecurity::decrypt((string)$payload['token_ciphertext'], $dataKey);
 $check(($notification['delivery_status'] ?? '') === 'pending', 'verification notification is queued, not reported as sent');
@@ -53,7 +62,9 @@ $check($service->authenticate($email, 'Wrong-Password-42!', '127.0.0.1', 'Synthe
 
 $reset = $service->requestPasswordReset($email);
 $check(($reset['message'] ?? '') === RecruitmentSecurity::GENERIC_ACCOUNT_RESPONSE, 'password recovery remains anti-enumerating');
-$resetNotification = $db->query("SELECT payload_json FROM recruitment_notification_outbox WHERE message_type = 'password_reset' ORDER BY notification_id DESC LIMIT 1")->fetch();
+$resetNotificationQuery = $db->prepare("SELECT payload_json FROM recruitment_notification_outbox WHERE candidate_id = :candidate_id AND message_type = 'password_reset' ORDER BY notification_id DESC LIMIT 1");
+$resetNotificationQuery->execute(['candidate_id' => $candidate['candidate_id']]);
+$resetNotification = $resetNotificationQuery->fetch();
 $resetPayload = json_decode((string)$resetNotification['payload_json'], true, 512, JSON_THROW_ON_ERROR);
 $resetToken = RecruitmentSecurity::decrypt((string)$resetPayload['token_ciphertext'], $dataKey);
 $newPassword = 'Synthetic-Recovered-84!';
@@ -62,7 +73,9 @@ $check(!$service->resetPassword($resetToken, $newPassword), 'consumed password-r
 $check(!$service->sessionVersionIsCurrent((int)$candidate['candidate_id'], $oldVersion), 'password reset revokes the previous session version');
 $newIdentity = $service->authenticate($email, $newPassword, '127.0.0.1', 'Synthetic Test Agent');
 $check(($newIdentity['session_version'] ?? 0) > $oldVersion, 'candidate can authenticate with the replacement credential and new session version');
-$check((int)$db->query("SELECT COUNT(*) FROM recruitment_audit_events WHERE actor_type = 'candidate'")->fetchColumn() >= 4, 'candidate identity actions create audit evidence');
+$auditCount = $db->prepare("SELECT COUNT(*) FROM recruitment_audit_events WHERE actor_type = 'candidate' AND actor_reference IN (:candidate_id, :public_id)");
+$auditCount->execute(['candidate_id' => (string)$candidate['candidate_id'], 'public_id' => (string)$candidate['public_id']]);
+$check((int)$auditCount->fetchColumn() >= 4, 'candidate identity actions create audit evidence');
 
 if ($failures !== []) {
     fwrite(STDERR, "FAIL\n- " . implode("\n- ", $failures) . "\n");

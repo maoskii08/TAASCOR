@@ -7,21 +7,17 @@ require_once('../includes/csrf.php');
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Forgot Password — TAASCOR HRIS</title>
-  <link rel="icon" type="image/x-icon" href="../assets/img/png/logo.png"/>
-  <link rel="stylesheet" href="../assets/vendor/fonts/boxicons.css"/>
-  <link rel="stylesheet" href="../assets/vendor/css/core.css"/>
-  <link rel="stylesheet" href="../assets/vendor/css/theme-default.css"/>
+  <link rel="icon" type="image/x-icon" href="../assets/img/favicon/favicon.ico"/>
+  <link rel="stylesheet" href="vendors/bootstrap-4.6.0/css/bootstrap.min.css"/>
   <link rel="stylesheet" href="../assets/css/login.css"/>
-  <script src="../assets/vendor/js/helpers.js"></script>
-  <script src="../assets/js/config.js"></script>
 </head>
 <body>
 <div class="container" style="max-width:460px;margin:80px auto;padding:20px;">
   <div style="text-align:center;margin-bottom:32px;">
     <img src="../assets/img/svg/logo.svg" class="img-fluid" width="260px" alt="TAASCOR HRIS">
-    <h4 style="margin-top:16px;color:#1a237e;">Forgot Password</h4>
+    <h1 style="margin-top:16px;color:#1a237e;font-size:2rem;">Forgot Password</h1>
     <p class="text-muted small">Enter your username. If an email is on file, we'll send a reset link.</p>
   </div>
 
@@ -31,22 +27,22 @@ require_once('../includes/csrf.php');
 
       <div id="formSection">
         <div class="mb-3">
-          <label class="form-label">Username</label>
-          <input type="text" id="usernameInput" class="form-control" placeholder="Your HRIS username" autofocus>
+          <label class="form-label" for="usernameInput">Username</label>
+          <input type="text" id="usernameInput" class="form-control" autocomplete="username" autofocus>
         </div>
         <button id="btnSend" class="btn btn-primary w-100">
-          <i class="bx bx-send me-1"></i> Send Reset Link
+          Send Reset Link
         </button>
       </div>
 
       <div class="text-center mt-3">
-        <a href="./" class="small text-muted"><i class="bx bx-arrow-back me-1"></i>Back to Login</a>
+        <a href="./" class="small text-muted">Back to Login</a>
       </div>
     </div>
   </div>
 </div>
 
-<script src="../assets/vendor/libs/jquery/jquery.js"></script>
+<script src="vendors/bootstrap-core/jquery-3.5.1.js"></script>
 <script>
 var csrfToken = <?= json_encode(csrf_token()) ?>;
 $('#btnSend').on('click', function () {
